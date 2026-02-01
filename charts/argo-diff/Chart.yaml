@@ -1,0 +1,18 @@
+apiVersion: v2
+name: argo-diff
+description: A Helm chart for argo-diff - ArgoCD diff preview service for GitHub PRs
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - argocd
+  - github
+  - diff
+  - preview
+  - gitops
+home: https://github.com/tamcore/argo-diff
+sources:
+  - https://github.com/tamcore/argo-diff
+maintainers:
+  - name: tamcore
+    url: https://github.com/tamcore
