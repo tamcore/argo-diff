@@ -19,6 +19,7 @@ import (
 	"github.com/tamcore/argo-diff/pkg/diff"
 	"github.com/tamcore/argo-diff/pkg/github"
 	"github.com/tamcore/argo-diff/pkg/matcher"
+	"github.com/tamcore/argo-diff/pkg/metrics"
 	"github.com/tamcore/argo-diff/pkg/worker"
 )
 
@@ -173,6 +174,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case s.jobQueue <- job:
+		metrics.JobsInQueue.Inc()
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "accepted",
@@ -215,11 +217,20 @@ func (s *Server) worker(id int) {
 				return
 			}
 
+			metrics.JobsInQueue.Dec()
 			log.Printf("Worker %d processing job for %s PR #%d", id, job.Repository, job.PRNumber)
 
-			if err := s.processJob(context.Background(), job); err != nil {
+			startTime := time.Now()
+			err := s.processJob(context.Background(), job)
+			duration := time.Since(startTime).Seconds()
+
+			metrics.ProcessingDuration.WithLabelValues(job.Repository).Observe(duration)
+
+			if err != nil {
+				metrics.RecordJobFailure(job.Repository)
 				log.Printf("Worker %d error processing job: %v", id, err)
 			} else {
+				metrics.RecordJobSuccess(job.Repository)
 				log.Printf("Worker %d completed job for %s PR #%d", id, job.Repository, job.PRNumber)
 			}
 		}

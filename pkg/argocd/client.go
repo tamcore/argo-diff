@@ -9,6 +9,7 @@ import (
 	"github.com/argoproj/argo-cd/v3/pkg/apiclient"
 	"github.com/argoproj/argo-cd/v3/pkg/apiclient/application"
 	appv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
+	"github.com/tamcore/argo-diff/pkg/metrics"
 )
 
 // Client wraps the ArgoCD API client
@@ -68,6 +69,7 @@ func (c *Client) ListApplications(ctx context.Context) ([]*appv1.Application, er
 		}
 		return nil
 	})
+	metrics.RecordArgocdCall("list", err)
 	return apps, err
 }
 
@@ -86,6 +88,7 @@ func (c *Client) GetManifests(ctx context.Context, appName, revision string) ([]
 		manifests = manifestResponse.Manifests
 		return nil
 	})
+	metrics.RecordArgocdCall("manifests", err)
 	return manifests, err
 }
 
@@ -122,6 +125,7 @@ func (c *Client) GetMultiSourceManifests(ctx context.Context, appName string, re
 		manifests = manifestResponse.Manifests
 		return nil
 	})
+	metrics.RecordArgocdCall("manifests_multi", err)
 	return manifests, err
 }
 

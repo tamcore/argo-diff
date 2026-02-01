@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/go-github/v68/github"
+	"github.com/tamcore/argo-diff/pkg/metrics"
 	"golang.org/x/oauth2"
 )
 
@@ -66,6 +67,7 @@ func (c *Client) PostComment(ctx context.Context, prNumber int, body, workflowNa
 		_, _, err := c.client.Issues.CreateComment(ctx, c.owner, c.repo, prNumber, &github.IssueComment{
 			Body: &partBody,
 		})
+		metrics.RecordGithubCall("create_comment", err)
 		if err != nil {
 			return fmt.Errorf("create comment part %d: %w", i+1, err)
 		}
@@ -128,6 +130,7 @@ func (c *Client) DeleteOldComments(ctx context.Context, prNumber int, workflowNa
 
 	for {
 		comments, resp, err := c.client.Issues.ListComments(ctx, c.owner, c.repo, prNumber, opts)
+		metrics.RecordGithubCall("list_comments", err)
 		if err != nil {
 			return fmt.Errorf("list comments: %w", err)
 		}
@@ -135,6 +138,7 @@ func (c *Client) DeleteOldComments(ctx context.Context, prNumber int, workflowNa
 		for _, comment := range comments {
 			if comment.Body != nil && isWorkflowComment(*comment.Body, workflowName) {
 				_, err = c.client.Issues.DeleteComment(ctx, c.owner, c.repo, *comment.ID)
+				metrics.RecordGithubCall("delete_comment", err)
 				if err != nil {
 					return fmt.Errorf("delete comment %d: %w", *comment.ID, err)
 				}
