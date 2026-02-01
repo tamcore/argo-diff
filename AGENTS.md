@@ -69,12 +69,20 @@ go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 go test ./...
 ```
 
+### 5. Verify GoReleaser Config (when modified)
+```bash
+goreleaser check
+```
+
+Run this whenever `.goreleaser.yml` or `.goreleaser.yaml` is modified.
+
 ## Pre-Commit Checklist
 
 - [ ] Code formatted with `go fmt ./...`
 - [ ] No issues from `go vet ./...`
 - [ ] No issues from `golangci-lint run ./...`
 - [ ] All tests pass with `go test ./...`
+- [ ] GoReleaser config validated with `goreleaser check` (if modified)
 - [ ] Commit message follows semantic commit format
 - [ ] Changes are logically grouped into small, focused commits
 
@@ -85,3 +93,17 @@ go test ./...
 3. Write descriptive commit messages explaining *what* and *why*
 4. Keep commits atomic - one logical change per commit
 5. Add tests for new functionality
+
+## GitHub Actions Workflow Guidelines
+
+**Always pin actions to their latest available minor version** (e.g., `actions/checkout@v4`) rather than using major version tags or SHA references. This ensures:
+- Security updates are automatically received
+- Breaking changes are avoided (minor versions are backward compatible)
+- Workflows remain maintainable and up-to-date
+
+**Example:**
+```yaml
+- uses: actions/checkout@v4  # ✓ Correct
+- uses: actions/checkout@v3  # ✗ Outdated
+- uses: actions/checkout@main  # ✗ Unpinned
+```
