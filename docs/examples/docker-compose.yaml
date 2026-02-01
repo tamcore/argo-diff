@@ -1,0 +1,75 @@
+# Docker Compose setup for local development
+#
+# This provides a complete local environment for testing argo-diff.
+# Note: You'll need a running ArgoCD instance to test actual diffs.
+#
+# Usage:
+#   docker-compose up -d
+#
+# The service will be available at http://localhost:8080
+
+services:
+  argo-diff:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"   # HTTP API
+      - "9090:9090"   # Metrics
+    environment:
+      # OIDC Configuration
+      # For local testing, you may need to disable OIDC or use a mock
+      OIDC_ISSUER: "https://token.actions.githubusercontent.com"
+      OIDC_AUDIENCE: "argo-diff"
+
+      # Allowed repositories (comma-separated)
+      # Leave empty to allow all (not recommended for production)
+      ALLOWED_REPOS: ""
+
+      # Logging
+      LOG_LEVEL: "debug"
+
+      # Worker configuration
+      WORKER_COUNT: "2"
+      QUEUE_SIZE: "10"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  # Optional: Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - argo-diff
+    profiles:
+      - monitoring
+
+  # Optional: Grafana for metrics visualization
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
+volumes:
+  grafana-data:

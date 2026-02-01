@@ -1,0 +1,12 @@
+# Prometheus configuration for argo-diff local development
+# Use with: docker-compose --profile monitoring up -d
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'argo-diff'
+    static_configs:
+      - targets: ['argo-diff:9090']
+    metrics_path: /metrics
