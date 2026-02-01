@@ -1,0 +1,130 @@
+version: 2
+
+project_name: argo-diff
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: argo-diff
+    main: ./cmd/server
+    binary: argo-diff
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+
+dockers:
+  - image_templates:
+      - "ghcr.io/tamcore/argo-diff:{{ .Version }}-amd64"
+    use: buildx
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/tamcore/argo-diff"
+    goarch: amd64
+
+  - image_templates:
+      - "ghcr.io/tamcore/argo-diff:{{ .Version }}-arm64"
+    use: buildx
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/tamcore/argo-diff"
+    goarch: arm64
+
+docker_manifests:
+  - name_template: "ghcr.io/tamcore/argo-diff:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/tamcore/argo-diff:{{ .Version }}-amd64"
+      - "ghcr.io/tamcore/argo-diff:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/tamcore/argo-diff:latest"
+    image_templates:
+      - "ghcr.io/tamcore/argo-diff:{{ .Version }}-amd64"
+      - "ghcr.io/tamcore/argo-diff:{{ .Version }}-arm64"
+
+nfpms:
+  - id: argo-diff
+    package_name: argo-diff
+    vendor: tamcore
+    homepage: https://github.com/tamcore/argo-diff
+    maintainer: tamcore <github@tamcore.io>
+    description: ArgoCD diff preview service for GitHub PRs
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: ./docs/examples/systemd.service
+        dst: /lib/systemd/system/argo-diff.service
+        type: config
+    scripts:
+      postinstall: scripts/postinstall.sh
+      preremove: scripts/preremove.sh
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: "New Features"
+      regexp: '^feat(\(.+\))?:'
+      order: 0
+    - title: "Bug Fixes"
+      regexp: '^fix(\(.+\))?:'
+      order: 1
+    - title: "Performance Improvements"
+      regexp: '^perf(\(.+\))?:'
+      order: 2
+    - title: "Other Changes"
+      order: 999
+
+release:
+  github:
+    owner: tamcore
+    name: argo-diff
+  draft: false
+  prerelease: auto
+  name_template: "{{.Tag}}"

@@ -1,0 +1,30 @@
+[Unit]
+Description=ArgoCD Diff Preview Service
+Documentation=https://github.com/tamcore/argo-diff
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=argo-diff
+Group=argo-diff
+ExecStart=/usr/bin/argo-diff
+Restart=on-failure
+RestartSec=5
+
+# Environment file for configuration
+EnvironmentFile=-/etc/argo-diff/config
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=
+
+[Install]
+WantedBy=multi-user.target
