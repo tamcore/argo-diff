@@ -386,6 +386,16 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 	return ghClient.PostComment(ctx, job.PRNumber, finalComment, job.WorkflowName)
 }
 
+// Validation constants
+const (
+	maxRepositoryLength   = 256
+	maxRefLength          = 256
+	maxWorkflowNameLength = 128
+	maxChangedFiles       = 1000
+	maxFilePathLength     = 512
+	maxServerLength       = 256
+)
+
 func validatePayload(p *WebhookPayload) error {
 	if p.GitHubToken == "" {
 		return fmt.Errorf("github_token is required")
@@ -396,20 +406,72 @@ func validatePayload(p *WebhookPayload) error {
 	if p.ArgocdServer == "" {
 		return fmt.Errorf("argocd_server is required")
 	}
+	if len(p.ArgocdServer) > maxServerLength {
+		return fmt.Errorf("argocd_server exceeds maximum length of %d", maxServerLength)
+	}
 	if p.Repository == "" {
 		return fmt.Errorf("repository is required")
+	}
+	if len(p.Repository) > maxRepositoryLength {
+		return fmt.Errorf("repository exceeds maximum length of %d", maxRepositoryLength)
+	}
+	if !isValidRepository(p.Repository) {
+		return fmt.Errorf("repository must be in format 'owner/repo'")
 	}
 	if p.PRNumber <= 0 {
 		return fmt.Errorf("pr_number must be positive")
 	}
+	if p.PRNumber > 1000000 {
+		return fmt.Errorf("pr_number exceeds maximum value")
+	}
 	if p.BaseRef == "" {
 		return fmt.Errorf("base_ref is required")
+	}
+	if len(p.BaseRef) > maxRefLength {
+		return fmt.Errorf("base_ref exceeds maximum length of %d", maxRefLength)
 	}
 	if p.HeadRef == "" {
 		return fmt.Errorf("head_ref is required")
 	}
+	if len(p.HeadRef) > maxRefLength {
+		return fmt.Errorf("head_ref exceeds maximum length of %d", maxRefLength)
+	}
 	if len(p.ChangedFiles) == 0 {
 		return fmt.Errorf("changed_files cannot be empty")
 	}
+	if len(p.ChangedFiles) > maxChangedFiles {
+		return fmt.Errorf("changed_files exceeds maximum of %d files", maxChangedFiles)
+	}
+	for _, file := range p.ChangedFiles {
+		if len(file) > maxFilePathLength {
+			return fmt.Errorf("file path exceeds maximum length of %d", maxFilePathLength)
+		}
+	}
+	if len(p.WorkflowName) > maxWorkflowNameLength {
+		return fmt.Errorf("workflow_name exceeds maximum length of %d", maxWorkflowNameLength)
+	}
 	return nil
+}
+
+func isValidRepository(repo string) bool {
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 {
+		return false
+	}
+	owner, name := parts[0], parts[1]
+	if owner == "" || name == "" {
+		return false
+	}
+	// Basic check for valid characters (alphanumeric, dash, underscore, dot)
+	for _, part := range parts {
+		for _, c := range part {
+			isAlpha := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+			isDigit := c >= '0' && c <= '9'
+			isSpecial := c == '-' || c == '_' || c == '.'
+			if !isAlpha && !isDigit && !isSpecial {
+				return false
+			}
+		}
+	}
+	return true
 }
