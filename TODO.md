@@ -118,20 +118,20 @@ charts/argo-diff/
 
 ---
 
-## Phase 5: Optional Enhancements
+## Phase 5: Optional Enhancements ✅
 
-### 5.1 Worker Pool Refactor
+### 5.1 Worker Pool Refactor ✅
 **File:** `pkg/worker/pool.go` (new)
 
-- [ ] Extract worker pool to dedicated package
-- [ ] Add pool status reporting for `/ready` endpoint
-- [ ] Implement graceful drain with timeout
+- [x] Extract worker pool to dedicated package
+- [x] Add pool status reporting for `/ready` endpoint
+- [x] Implement graceful drain with timeout
 
-### 5.2 Security Hardening
+### 5.2 Security Hardening ✅
 
-- [ ] Add rate limiting per repository
-- [ ] Token sanitization in logs
-- [ ] Input validation hardening
+- [x] Add rate limiting per repository
+- [x] Token sanitization in logs (sanitize package)
+- [x] Input validation hardening
 
 ---
 
