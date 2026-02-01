@@ -1,0 +1,104 @@
+# Example GitHub Actions workflow for triggering argo-diff
+#
+# This workflow runs on pull requests and sends the PR details to
+# argo-diff service to generate ArgoCD diff previews.
+#
+# Prerequisites:
+# 1. Deploy argo-diff service and expose it via ingress
+# 2. Configure OIDC audience in argo-diff to match this workflow
+# 3. Add your repository to the allowed repos list
+
+name: ArgoCD Diff Preview
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      # Trigger on changes to Kubernetes manifests, Helm charts, or ArgoCD apps
+      - 'charts/**'
+      - 'manifests/**'
+      - 'applications/**'
+      - 'kustomize/**'
+      - '*.yaml'
+      - '*.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write  # Required for OIDC token
+
+jobs:
+  diff:
+    name: Generate ArgoCD Diff
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for accurate diff
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+        with:
+          json: true
+          escape_json: false
+
+      - name: Get OIDC token
+        id: oidc
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('argo-diff');
+            core.setSecret(token);
+            core.setOutput('token', token);
+
+      - name: Trigger argo-diff
+        env:
+          ARGO_DIFF_URL: ${{ vars.ARGO_DIFF_URL }}  # e.g., https://argo-diff.example.com
+          ARGOCD_SERVER: ${{ vars.ARGOCD_SERVER }}  # e.g., argocd.example.com
+          ARGOCD_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+        run: |
+          # Build the payload
+          PAYLOAD=$(jq -n \
+            --arg repo "${{ github.repository }}" \
+            --arg pr "${{ github.event.pull_request.number }}" \
+            --arg base "${{ github.event.pull_request.base.ref }}" \
+            --arg head "${{ github.event.pull_request.head.ref }}" \
+            --arg github_token "${{ secrets.GITHUB_TOKEN }}" \
+            --arg argocd_server "$ARGOCD_SERVER" \
+            --arg argocd_token "$ARGOCD_TOKEN" \
+            --argjson changed_files "$CHANGED_FILES" \
+            '{
+              repository: $repo,
+              pr_number: ($pr | tonumber),
+              base_ref: $base,
+              head_ref: $head,
+              github_token: $github_token,
+              argocd_server: $argocd_server,
+              argocd_token: $argocd_token,
+              changed_files: $changed_files,
+              workflow_name: "ArgoCD Diff Preview"
+            }')
+
+          # Send request to argo-diff
+          HTTP_CODE=$(curl -s -o response.txt -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $OIDC_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$ARGO_DIFF_URL/webhook")
+
+          # Check response
+          if [ "$HTTP_CODE" -eq 202 ]; then
+            echo "✅ Diff job queued successfully"
+            cat response.txt
+          else
+            echo "❌ Failed to queue diff job (HTTP $HTTP_CODE)"
+            cat response.txt
+            exit 1
+          fi
