@@ -20,6 +20,7 @@ import (
 	"github.com/tamcore/argo-diff/pkg/github"
 	"github.com/tamcore/argo-diff/pkg/logging"
 	"github.com/tamcore/argo-diff/pkg/matcher"
+	"github.com/tamcore/argo-diff/pkg/ratelimit"
 	"github.com/tamcore/argo-diff/pkg/worker"
 )
 
@@ -37,9 +38,10 @@ type WebhookPayload struct {
 }
 
 type Server struct {
-	cfg  *config.Config
-	oidc *auth.OIDCValidator
-	pool *worker.Pool
+	cfg     *config.Config
+	oidc    *auth.OIDCValidator
+	pool    *worker.Pool
+	limiter *ratelimit.Limiter
 }
 
 func main() {
@@ -57,11 +59,17 @@ func main() {
 		"workers", cfg.WorkerCount,
 		"queue_size", cfg.QueueSize,
 		"log_level", cfg.LogLevel,
+		"rate_limit_per_repo", cfg.RateLimitPerRepo,
 	)
 
 	srv := &Server{
 		cfg:  cfg,
 		oidc: auth.NewOIDCValidator(),
+	}
+
+	// Create rate limiter if enabled
+	if cfg.RateLimitPerRepo > 0 {
+		srv.limiter = ratelimit.NewLimiter(cfg.RateLimitPerRepo, time.Minute)
 	}
 
 	// Create and start worker pool
@@ -122,6 +130,11 @@ func main() {
 	// Stop worker pool gracefully
 	srv.pool.Stop(25 * time.Second)
 
+	// Stop rate limiter
+	if srv.limiter != nil {
+		srv.limiter.Stop()
+	}
+
 	logging.Info("Shutdown complete")
 }
 
@@ -153,6 +166,13 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.IsRepoAllowed(repo) {
 		log.Warn("Repository not in allowlist", "repository", repo)
 		http.Error(w, "Repository not in allowlist", http.StatusForbidden)
+		return
+	}
+
+	// Check rate limit
+	if s.limiter != nil && !s.limiter.Allow(repo) {
+		log.Warn("Rate limit exceeded", "repository", repo)
+		http.Error(w, "Rate limit exceeded, try again later", http.StatusTooManyRequests)
 		return
 	}
 

@@ -22,16 +22,20 @@ type Config struct {
 
 	// Logging configuration
 	LogLevel string
+
+	// Rate limiting configuration
+	RateLimitPerRepo int // requests per minute per repository (0 = disabled)
 }
 
 // Load reads configuration from environment variables
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:        getEnvInt("PORT", 8080),
-		MetricsPort: getEnvInt("METRICS_PORT", 9090),
-		WorkerCount: getEnvInt("WORKER_COUNT", 1),
-		QueueSize:   getEnvInt("QUEUE_SIZE", 100),
-		LogLevel:    getEnvString("LOG_LEVEL", "info"),
+		Port:             getEnvInt("PORT", 8080),
+		MetricsPort:      getEnvInt("METRICS_PORT", 9090),
+		WorkerCount:      getEnvInt("WORKER_COUNT", 1),
+		QueueSize:        getEnvInt("QUEUE_SIZE", 100),
+		LogLevel:         getEnvString("LOG_LEVEL", "info"),
+		RateLimitPerRepo: getEnvInt("RATE_LIMIT_PER_REPO", 10), // 10 requests/min default
 	}
 
 	// Parse repository allowlist (required)
