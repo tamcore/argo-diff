@@ -106,6 +106,40 @@ func TestMatchApplications(t *testing.T) {
 			changedFiles: []string{"app2/deployment.yaml"},
 			wantCount:    1,
 		},
+		{
+			name: "app definition file match",
+			apps: []*appv1.Application{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "myapp"},
+					Spec: appv1.ApplicationSpec{
+						Source: &appv1.ApplicationSource{
+							RepoURL: "https://github.com/user/repo",
+							Path:    "charts/myapp",
+						},
+					},
+				},
+			},
+			repo:         "https://github.com/user/repo",
+			changedFiles: []string{"applications/myapp.yaml"},
+			wantCount:    1,
+		},
+		{
+			name: "nested app definition file match",
+			apps: []*appv1.Application{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "myapp"},
+					Spec: appv1.ApplicationSpec{
+						Source: &appv1.ApplicationSource{
+							RepoURL: "https://github.com/user/repo",
+							Path:    "charts/myapp",
+						},
+					},
+				},
+			},
+			repo:         "https://github.com/user/repo",
+			changedFiles: []string{"applications/prod/myapp.yaml"},
+			wantCount:    1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -115,6 +149,58 @@ func TestMatchApplications(t *testing.T) {
 				t.Errorf("MatchApplications() returned %d apps, want %d", len(got), tt.wantCount)
 			}
 		})
+	}
+}
+
+func TestIsAppDefinitionFile(t *testing.T) {
+	tests := []struct {
+		file    string
+		appName string
+		want    bool
+	}{
+		{"applications/myapp.yaml", "myapp", true},
+		{"applications/myapp.yml", "myapp", true},
+		{"applications/prod/myapp.yaml", "myapp", true},
+		{"apps/myapp.yaml", "myapp", true},
+		{"argocd/myapp.yaml", "myapp", true},
+		{"applications/other.yaml", "myapp", false},
+		{"charts/myapp/values.yaml", "myapp", false},
+		{"myapp.yaml", "myapp", false}, // not in app directory
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.file, func(t *testing.T) {
+			got := isAppDefinitionFile(tt.file, tt.appName)
+			if got != tt.want {
+				t.Errorf("isAppDefinitionFile(%q, %q) = %v, want %v", tt.file, tt.appName, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMatchApplicationsWithDetails(t *testing.T) {
+	apps := []*appv1.Application{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "app1"},
+			Spec: appv1.ApplicationSpec{
+				Source: &appv1.ApplicationSource{
+					RepoURL: "https://github.com/user/repo",
+					Path:    "app1",
+				},
+			},
+		},
+	}
+
+	results := MatchApplicationsWithDetails(apps, "https://github.com/user/repo", []string{"app1/deployment.yaml"})
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	if results[0].MatchReason == "" {
+		t.Error("MatchReason should not be empty")
+	}
+	if len(results[0].MatchedPaths) == 0 {
+		t.Error("MatchedPaths should not be empty")
 	}
 }
 

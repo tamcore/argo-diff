@@ -26,9 +26,51 @@ spec:
   replicas: 3
 `}
 
-	diff, err := GenerateDiff(baseManifests, headManifests, "test-app")
+	appInfo := &AppInfo{
+		Name:      "test-app",
+		Namespace: "argocd",
+		Server:    "https://argocd.example.com",
+		Status:    "Synced",
+		Health:    "Healthy",
+	}
+
+	result, err := GenerateDiff(baseManifests, headManifests, appInfo)
 	if err != nil {
 		t.Fatalf("GenerateDiff() error = %v", err)
+	}
+
+	if !result.HasChanges {
+		t.Error("result should indicate changes")
+	}
+	if len(result.Diffs) == 0 {
+		t.Error("result should contain diffs")
+	}
+}
+
+func TestGenerateDiffLegacy(t *testing.T) {
+	baseManifests := []string{`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-app
+  namespace: default
+spec:
+  replicas: 2
+`}
+
+	headManifests := []string{`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-app
+  namespace: default
+spec:
+  replicas: 3
+`}
+
+	diff, err := GenerateDiffLegacy(baseManifests, headManifests, "test-app")
+	if err != nil {
+		t.Fatalf("GenerateDiffLegacy() error = %v", err)
 	}
 
 	if !strings.Contains(diff, "test-app") {
@@ -123,5 +165,86 @@ func TestResourceKey(t *testing.T) {
 				t.Errorf("key() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAppInfo(t *testing.T) {
+	info := &AppInfo{
+		Name:      "test-app",
+		Namespace: "argocd",
+		Server:    "https://argocd.example.com",
+		Status:    "Synced",
+		Health:    "Healthy",
+	}
+
+	if info.StatusEmoji() != "✅" {
+		t.Errorf("StatusEmoji() = %q, want ✅", info.StatusEmoji())
+	}
+
+	if info.HealthEmoji() != "💚" {
+		t.Errorf("HealthEmoji() = %q, want 💚", info.HealthEmoji())
+	}
+
+	url := info.ArgoURL()
+	if url != "https://argocd.example.com/applications/argocd/test-app" {
+		t.Errorf("ArgoURL() = %q, want %q", url, "https://argocd.example.com/applications/argocd/test-app")
+	}
+}
+
+func TestAppInfoEmojis(t *testing.T) {
+	tests := []struct {
+		status string
+		health string
+		wantS  string
+		wantH  string
+	}{
+		{"Synced", "Healthy", "✅", "💚"},
+		{"OutOfSync", "Degraded", "❌", "💔"},
+		{"Unknown", "Progressing", "❓", "🔄"},
+		{"", "Suspended", "❓", "⏸️"},
+	}
+
+	for _, tt := range tests {
+		info := &AppInfo{Status: tt.status, Health: tt.health}
+		if got := info.StatusEmoji(); got != tt.wantS {
+			t.Errorf("StatusEmoji(%q) = %q, want %q", tt.status, got, tt.wantS)
+		}
+		if got := info.HealthEmoji(); got != tt.wantH {
+			t.Errorf("HealthEmoji(%q) = %q, want %q", tt.health, got, tt.wantH)
+		}
+	}
+}
+
+func TestFormatReport(t *testing.T) {
+	results := []*DiffResult{
+		{
+			AppInfo:    &AppInfo{Name: "app1", Status: "Synced", Health: "Healthy"},
+			HasChanges: true,
+			Diffs:      []string{"diff1"},
+		},
+		{
+			AppInfo:    &AppInfo{Name: "app2", Status: "Synced", Health: "Healthy"},
+			HasChanges: false,
+			Diffs:      []string{},
+		},
+	}
+
+	report := NewDiffReport("Test Workflow", results)
+	if report.TotalApps != 2 {
+		t.Errorf("TotalApps = %d, want 2", report.TotalApps)
+	}
+	if report.AppsWithDiffs != 1 {
+		t.Errorf("AppsWithDiffs = %d, want 1", report.AppsWithDiffs)
+	}
+
+	formatted := FormatReport(report)
+	if !strings.Contains(formatted, "ArgoCD Diff Preview") {
+		t.Error("formatted report should contain header")
+	}
+	if !strings.Contains(formatted, "Test Workflow") {
+		t.Error("formatted report should contain workflow name")
+	}
+	if !strings.Contains(formatted, "1** of **2") {
+		t.Error("formatted report should contain summary")
 	}
 }

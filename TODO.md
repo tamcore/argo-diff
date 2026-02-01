@@ -2,37 +2,37 @@
 
 Remaining work to complete the argo-diff implementation as per [IMPLEMENTATION.md](IMPLEMENTATION.md).
 
-## Phase 1: Core Feature Improvements
+## Phase 1: Core Feature Improvements ✅
 
-### 1.1 Multi-part Comment Support
+### 1.1 Multi-part Comment Support ✅
 **File:** `pkg/github/client.go`
 
-- [ ] Split large comments at application boundaries (not mid-diff)
-- [ ] Add multi-part headers: `## ArgoCD Diff Preview (part N of M)`
-- [ ] Include workflow identifier in all parts: `<!-- argocd-diff-workflow: <name> -->`
-- [ ] Update `DeleteOldComments` to find comments by workflow name
+- [x] Split large comments at application boundaries (not mid-diff)
+- [x] Add multi-part headers: `## ArgoCD Diff Preview (part N of M)`
+- [x] Include workflow identifier in all parts: `<!-- argocd-diff-workflow: <name> -->`
+- [x] Update `DeleteOldComments` to find comments by workflow name
 
-### 1.2 Enhanced Diff Output
+### 1.2 Enhanced Diff Output ✅
 **File:** `pkg/diff/engine.go`
 
-- [ ] Add ArgoCD UI link per application: `[View in ArgoCD](https://server/applications/namespace/app)`
-- [ ] Include app status and health with emojis (✅ Synced, ❌ OutOfSync, 💚 Healthy, 🔄 Progressing)
-- [ ] Add generation timestamp to output
-- [ ] Show summary: "**N** of **M** applications have changes"
+- [x] Add ArgoCD UI link per application: `[View in ArgoCD](https://server/applications/namespace/app)`
+- [x] Include app status and health with emojis (✅ Synced, ❌ OutOfSync, 💚 Healthy, 🔄 Progressing)
+- [x] Add generation timestamp to output
+- [x] Show summary: "**N** of **M** applications have changes"
 
-### 1.3 Application Definition Matching
+### 1.3 Application Definition Matching ✅
 **File:** `pkg/matcher/matcher.go`
 
-- [ ] Match changes to `applications/<app_name>.yaml`
-- [ ] Match nested definitions: `applications/*/<app_name>.yaml`
-- [ ] Return app metadata (status, health, last sync revision, namespace)
+- [x] Match changes to `applications/<app_name>.yaml`
+- [x] Match nested definitions: `applications/*/<app_name>.yaml`
+- [x] Return app metadata (status, health, last sync revision, namespace)
 
-### 1.4 Multi-source Manifest Support
+### 1.4 Multi-source Manifest Support ✅
 **File:** `pkg/argocd/client.go`
 
-- [ ] Add `GetMultiSourceManifests(ctx, appName, revisions, sourcePositions)` method
-- [ ] Handle `--revisions` and `--source-positions` for multi-source apps
-- [ ] Update `processJob` to detect and handle multi-source applications
+- [x] Add `GetMultiSourceManifests(ctx, appName, revisions, sourcePositions)` method
+- [x] Handle `--revisions` and `--source-positions` for multi-source apps
+- [x] Update `processJob` to detect and handle multi-source applications
 
 ---
 

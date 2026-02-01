@@ -8,7 +8,7 @@ import (
 func TestLoad(t *testing.T) {
 	// Save original env and restore after test
 	originalAllowlist := os.Getenv("REPO_ALLOWLIST")
-	defer os.Setenv("REPO_ALLOWLIST", originalAllowlist)
+	defer func() { _ = os.Setenv("REPO_ALLOWLIST", originalAllowlist) }()
 
 	tests := []struct {
 		name        string
@@ -76,14 +76,14 @@ func TestLoad(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Clear and set environment variables
-			os.Unsetenv("PORT")
-			os.Unsetenv("METRICS_PORT")
-			os.Unsetenv("WORKER_COUNT")
-			os.Unsetenv("QUEUE_SIZE")
-			os.Unsetenv("REPO_ALLOWLIST")
+			_ = os.Unsetenv("PORT")
+			_ = os.Unsetenv("METRICS_PORT")
+			_ = os.Unsetenv("WORKER_COUNT")
+			_ = os.Unsetenv("QUEUE_SIZE")
+			_ = os.Unsetenv("REPO_ALLOWLIST")
 
 			for key, value := range tt.envVars {
-				os.Setenv(key, value)
+				_ = os.Setenv(key, value)
 			}
 
 			cfg, err := Load()

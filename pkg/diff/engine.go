@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/sergi/go-diff/diffmatchpatch"
 	"gopkg.in/yaml.v3"
@@ -12,7 +13,6 @@ import (
 
 const (
 	helmHookAnnotation = "helm.sh/hook"
-	maxCommentSize     = 60000 // GitHub's limit is 65536, leave some buffer
 )
 
 // Resource represents a Kubernetes resource extracted from a YAML manifest
@@ -28,15 +28,22 @@ type Resource struct {
 }
 
 // GenerateDiff generates a formatted diff between base and head manifests
-func GenerateDiff(baseManifests, headManifests []string, appName string) (string, error) {
+// Returns a DiffResult with structured information about the diff
+func GenerateDiff(baseManifests, headManifests []string, appInfo *AppInfo) (*DiffResult, error) {
+	result := &DiffResult{
+		AppInfo:    appInfo,
+		Diffs:      []string{},
+		HasChanges: false,
+	}
+
 	baseResources, err := parseManifests(baseManifests)
 	if err != nil {
-		return "", fmt.Errorf("parse base manifests: %w", err)
+		return nil, fmt.Errorf("parse base manifests: %w", err)
 	}
 
 	headResources, err := parseManifests(headManifests)
 	if err != nil {
-		return "", fmt.Errorf("parse head manifests: %w", err)
+		return nil, fmt.Errorf("parse head manifests: %w", err)
 	}
 
 	// Filter out helm hooks
@@ -54,21 +61,21 @@ func GenerateDiff(baseManifests, headManifests []string, appName string) (string
 		headMap[r.key()] = r
 	}
 
-	var diffs []string
-
 	// Find modified and deleted resources
 	for key, base := range baseMap {
 		if head, exists := headMap[key]; exists {
 			// Resource exists in both - check for changes
 			if base.raw != head.raw {
 				diff := generateResourceDiff(base, head)
-				diffs = append(diffs, diff)
+				result.Diffs = append(result.Diffs, diff)
+				result.HasChanges = true
 			}
 		} else {
 			// Resource deleted
 			diff := fmt.Sprintf("<details>\n<summary>🗑️ Deleted: %s</summary>\n\n```yaml\n%s\n```\n</details>",
 				base.key(), base.raw)
-			diffs = append(diffs, diff)
+			result.Diffs = append(result.Diffs, diff)
+			result.HasChanges = true
 		}
 	}
 
@@ -77,24 +84,101 @@ func GenerateDiff(baseManifests, headManifests []string, appName string) (string
 		if _, exists := baseMap[key]; !exists {
 			diff := fmt.Sprintf("<details>\n<summary>➕ Added: %s</summary>\n\n```yaml\n%s\n```\n</details>",
 				head.key(), head.raw)
-			diffs = append(diffs, diff)
+			result.Diffs = append(result.Diffs, diff)
+			result.HasChanges = true
 		}
 	}
 
-	if len(diffs) == 0 {
-		return fmt.Sprintf("## ✅ No changes for `%s`\n", appName), nil
-	}
-
-	result := fmt.Sprintf("## 📝 Changes for `%s`\n\n", appName)
-	result += strings.Join(diffs, "\n\n")
-
-	// Truncate if too large
-	if len(result) > maxCommentSize {
-		truncated := result[:maxCommentSize-200]
-		result = truncated + "\n\n... (diff truncated due to size)"
-	}
-
 	return result, nil
+}
+
+// GenerateDiffLegacy generates a formatted diff between base and head manifests (legacy format)
+func GenerateDiffLegacy(baseManifests, headManifests []string, appName string) (string, error) {
+	appInfo := &AppInfo{Name: appName}
+	result, err := GenerateDiff(baseManifests, headManifests, appInfo)
+	if err != nil {
+		return "", err
+	}
+	return FormatAppDiff(result), nil
+}
+
+// FormatAppDiff formats a single application's diff result as markdown
+func FormatAppDiff(result *DiffResult) string {
+	if result.ErrorMessage != "" {
+		return fmt.Sprintf("### ⚠️ `%s`\n\n%s", result.AppInfo.Name, result.ErrorMessage)
+	}
+
+	if !result.HasChanges {
+		return fmt.Sprintf("### ✅ No changes for `%s`\n", result.AppInfo.Name)
+	}
+
+	var sb strings.Builder
+
+	// Header with app name
+	sb.WriteString(fmt.Sprintf("### 📝 `%s`\n\n", result.AppInfo.Name))
+
+	// Status and health line
+	sb.WriteString(fmt.Sprintf("**Status:** %s %s | **Health:** %s %s\n\n",
+		result.AppInfo.StatusEmoji(), result.AppInfo.Status,
+		result.AppInfo.HealthEmoji(), result.AppInfo.Health))
+
+	// ArgoCD link if available
+	if url := result.AppInfo.ArgoURL(); url != "" {
+		sb.WriteString(fmt.Sprintf("[View in ArgoCD](%s)\n\n", url))
+	}
+
+	// Diffs
+	sb.WriteString(strings.Join(result.Diffs, "\n\n"))
+
+	return sb.String()
+}
+
+// FormatReport formats a complete diff report as markdown
+func FormatReport(report *DiffReport) string {
+	var sb strings.Builder
+
+	// Header
+	sb.WriteString("# ArgoCD Diff Preview\n\n")
+
+	// Summary
+	sb.WriteString(fmt.Sprintf("**%d** of **%d** applications have changes\n\n",
+		report.AppsWithDiffs, report.TotalApps))
+
+	// Timestamp
+	sb.WriteString(fmt.Sprintf("_Generated at %s_\n\n", report.Timestamp))
+
+	// Workflow identifier (for comment management)
+	sb.WriteString(fmt.Sprintf("<!-- argocd-diff-workflow: %s -->\n\n", report.WorkflowName))
+
+	sb.WriteString("---\n\n")
+
+	// Application diffs
+	for i, result := range report.Results {
+		sb.WriteString(FormatAppDiff(result))
+		if i < len(report.Results)-1 {
+			sb.WriteString("\n\n---\n\n")
+		}
+	}
+
+	return sb.String()
+}
+
+// NewDiffReport creates a new diff report with metadata
+func NewDiffReport(workflowName string, results []*DiffResult) *DiffReport {
+	report := &DiffReport{
+		WorkflowName: workflowName,
+		Timestamp:    time.Now().UTC().Format("3:04PM MST, 2 Jan 2006"),
+		TotalApps:    len(results),
+		Results:      results,
+	}
+
+	for _, r := range results {
+		if r.HasChanges {
+			report.AppsWithDiffs++
+		}
+	}
+
+	return report
 }
 
 // parseManifests parses YAML manifests into Resource structs

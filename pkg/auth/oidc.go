@@ -64,7 +64,7 @@ func ExtractBearerToken(authHeader string) (string, error) {
 	}
 
 	if !strings.EqualFold(parts[0], "Bearer") {
-		return "", fmt.Errorf("Authorization header must use Bearer scheme")
+		return "", fmt.Errorf("authorization header must use Bearer scheme")
 	}
 
 	token := strings.TrimSpace(parts[1])

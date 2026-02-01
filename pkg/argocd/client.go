@@ -15,6 +15,7 @@ import (
 type Client struct {
 	appClient application.ApplicationServiceClient
 	conn      io.Closer
+	server    string
 }
 
 // NewClient creates a new ArgoCD client
@@ -35,11 +36,16 @@ func NewClient(ctx context.Context, server, token string, insecureTLS bool) (*Cl
 	return &Client{
 		appClient: appClient,
 		conn:      conn,
+		server:    server,
 	}, nil
 }
 
-// Close closes the connection to ArgoCD
+// Server returns the ArgoCD server URL
+func (c *Client) Server() string {
+	return c.server
+}
 
+// Close closes the connection to ArgoCD
 func (c *Client) Close() error {
 	if c.conn != nil {
 		return c.conn.Close()
@@ -56,6 +62,7 @@ func (c *Client) ListApplications(ctx context.Context) ([]*appv1.Application, er
 		if err != nil {
 			return fmt.Errorf("failed to list applications: %w", err)
 		}
+		apps = nil // Reset on retry
 		for i := range appList.Items {
 			apps = append(apps, &appList.Items[i])
 		}
@@ -80,6 +87,58 @@ func (c *Client) GetManifests(ctx context.Context, appName, revision string) ([]
 		return nil
 	})
 	return manifests, err
+}
+
+// MultiSourceRevision represents a revision for a specific source in a multi-source app
+type MultiSourceRevision struct {
+	Revision       string
+	SourcePosition int // 1-based position
+}
+
+// GetMultiSourceManifests fetches manifests for a multi-source application with specific revisions
+// Each source can have its own revision specified by position
+func (c *Client) GetMultiSourceManifests(ctx context.Context, appName string, revisions []MultiSourceRevision) ([]string, error) {
+	var manifests []string
+	err := retry(ctx, 3, func() error {
+		// Build the revisions and source positions arrays
+		revisionList := make([]string, 0, len(revisions))
+		sourcePositions := make([]int64, 0, len(revisions))
+
+		for _, r := range revisions {
+			revisionList = append(revisionList, r.Revision)
+			sourcePositions = append(sourcePositions, int64(r.SourcePosition))
+		}
+
+		query := &application.ApplicationManifestQuery{
+			Name:            &appName,
+			Revisions:       revisionList,
+			SourcePositions: sourcePositions,
+		}
+
+		manifestResponse, err := c.appClient.GetManifests(ctx, query)
+		if err != nil {
+			return fmt.Errorf("failed to get multi-source manifests for app %s: %w", appName, err)
+		}
+		manifests = manifestResponse.Manifests
+		return nil
+	})
+	return manifests, err
+}
+
+// IsMultiSource returns true if the application has multiple sources
+func IsMultiSource(app *appv1.Application) bool {
+	return len(app.Spec.Sources) > 0
+}
+
+// GetSourceCount returns the number of sources for an application
+func GetSourceCount(app *appv1.Application) int {
+	if len(app.Spec.Sources) > 0 {
+		return len(app.Spec.Sources)
+	}
+	if app.Spec.Source != nil {
+		return 1
+	}
+	return 0
 }
 
 // retry executes a function with exponential backoff

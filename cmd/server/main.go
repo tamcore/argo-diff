@@ -174,7 +174,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	select {
 	case s.jobQueue <- job:
 		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "accepted",
 			"message": fmt.Sprintf("Job queued for %s PR #%d", payload.Repository, payload.PRNumber),
 		})
@@ -185,9 +185,9 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
@@ -199,7 +199,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
 }
 
 func (s *Server) worker(id int) {
@@ -237,21 +237,24 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 	// Create GitHub client
 	ghClient := github.NewClient(ctx, job.GitHubToken, owner, repo)
 
+	// Helper to post errors
+	postError := func(msg string) {
+		errorMsg := fmt.Sprintf("## ❌ Error\n\n%s", msg)
+		_ = ghClient.PostComment(ctx, job.PRNumber, errorMsg, job.WorkflowName)
+	}
+
 	// Create ArgoCD client
 	argoClient, err := argocd.NewClient(ctx, job.ArgocdServer, job.ArgocdToken, job.ArgocdInsecure)
 	if err != nil {
-		// Post error to GitHub
-		errorMsg := fmt.Sprintf("## ❌ Error\n\nFailed to connect to ArgoCD: %v", err)
-		_ = ghClient.PostComment(ctx, job.PRNumber, errorMsg)
+		postError(fmt.Sprintf("Failed to connect to ArgoCD: %v", err))
 		return fmt.Errorf("create argocd client: %w", err)
 	}
-	defer argoClient.Close()
+	defer func() { _ = argoClient.Close() }()
 
 	// List all ArgoCD applications
 	apps, err := argoClient.ListApplications(ctx)
 	if err != nil {
-		errorMsg := fmt.Sprintf("## ❌ Error\n\nFailed to list ArgoCD applications: %v", err)
-		_ = ghClient.PostComment(ctx, job.PRNumber, errorMsg)
+		postError(fmt.Sprintf("Failed to list ArgoCD applications: %v", err))
 		return fmt.Errorf("list applications: %w", err)
 	}
 
@@ -260,51 +263,99 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 
 	if len(affectedApps) == 0 {
 		noChangesMsg := fmt.Sprintf("## ✅ No ArgoCD Applications Affected\n\nNo applications found matching repository `%s` and changed files.", job.Repository)
-		return ghClient.PostComment(ctx, job.PRNumber, noChangesMsg)
+		return ghClient.PostComment(ctx, job.PRNumber, noChangesMsg, job.WorkflowName)
 	}
 
 	log.Printf("Found %d affected applications", len(affectedApps))
 
 	// Generate diffs for each affected application
-	var allDiffs []string
+	var diffResults []*diff.DiffResult
 	for _, app := range affectedApps {
 		appName := app.Name
+		appInfo := diff.NewAppInfo(app, argoClient.Server())
 
-		// Get manifests for base ref
-		baseManifests, err := argoClient.GetManifests(ctx, appName, job.BaseRef)
-		if err != nil {
-			log.Printf("Warning: failed to get base manifests for %s: %v", appName, err)
-			allDiffs = append(allDiffs, fmt.Sprintf("## ⚠️ `%s`\n\nFailed to get base manifests: %v", appName, err))
-			continue
-		}
+		// Get manifests - handle multi-source apps
+		var baseManifests, headManifests []string
 
-		// Get manifests for head ref
-		headManifests, err := argoClient.GetManifests(ctx, appName, job.HeadRef)
-		if err != nil {
-			log.Printf("Warning: failed to get head manifests for %s: %v", appName, err)
-			allDiffs = append(allDiffs, fmt.Sprintf("## ⚠️ `%s`\n\nFailed to get head manifests: %v", appName, err))
-			continue
+		if argocd.IsMultiSource(app) {
+			// Multi-source app: create revisions for all sources
+			sourceCount := argocd.GetSourceCount(app)
+			baseRevisions := make([]argocd.MultiSourceRevision, sourceCount)
+			headRevisions := make([]argocd.MultiSourceRevision, sourceCount)
+
+			for i := 0; i < sourceCount; i++ {
+				baseRevisions[i] = argocd.MultiSourceRevision{
+					Revision:       job.BaseRef,
+					SourcePosition: i + 1, // 1-based
+				}
+				headRevisions[i] = argocd.MultiSourceRevision{
+					Revision:       job.HeadRef,
+					SourcePosition: i + 1,
+				}
+			}
+
+			baseManifests, err = argoClient.GetMultiSourceManifests(ctx, appName, baseRevisions)
+			if err != nil {
+				log.Printf("Warning: failed to get base manifests for multi-source app %s: %v", appName, err)
+				diffResults = append(diffResults, &diff.DiffResult{
+					AppInfo:      appInfo,
+					ErrorMessage: fmt.Sprintf("Failed to get base manifests: %v", err),
+				})
+				continue
+			}
+
+			headManifests, err = argoClient.GetMultiSourceManifests(ctx, appName, headRevisions)
+			if err != nil {
+				log.Printf("Warning: failed to get head manifests for multi-source app %s: %v", appName, err)
+				diffResults = append(diffResults, &diff.DiffResult{
+					AppInfo:      appInfo,
+					ErrorMessage: fmt.Sprintf("Failed to get head manifests: %v", err),
+				})
+				continue
+			}
+		} else {
+			// Single-source app
+			baseManifests, err = argoClient.GetManifests(ctx, appName, job.BaseRef)
+			if err != nil {
+				log.Printf("Warning: failed to get base manifests for %s: %v", appName, err)
+				diffResults = append(diffResults, &diff.DiffResult{
+					AppInfo:      appInfo,
+					ErrorMessage: fmt.Sprintf("Failed to get base manifests: %v", err),
+				})
+				continue
+			}
+
+			headManifests, err = argoClient.GetManifests(ctx, appName, job.HeadRef)
+			if err != nil {
+				log.Printf("Warning: failed to get head manifests for %s: %v", appName, err)
+				diffResults = append(diffResults, &diff.DiffResult{
+					AppInfo:      appInfo,
+					ErrorMessage: fmt.Sprintf("Failed to get head manifests: %v", err),
+				})
+				continue
+			}
 		}
 
 		// Generate diff
-		diffOutput, err := diff.GenerateDiff(baseManifests, headManifests, appName)
+		result, err := diff.GenerateDiff(baseManifests, headManifests, appInfo)
 		if err != nil {
 			log.Printf("Warning: failed to generate diff for %s: %v", appName, err)
-			allDiffs = append(allDiffs, fmt.Sprintf("## ⚠️ `%s`\n\nFailed to generate diff: %v", appName, err))
+			diffResults = append(diffResults, &diff.DiffResult{
+				AppInfo:      appInfo,
+				ErrorMessage: fmt.Sprintf("Failed to generate diff: %v", err),
+			})
 			continue
 		}
 
-		allDiffs = append(allDiffs, diffOutput)
+		diffResults = append(diffResults, result)
 	}
 
-	// Combine all diffs
-	header := fmt.Sprintf("# ArgoCD Diff Report\n\n**Workflow:** %s  \n**Changed Files:** %d  \n**Affected Applications:** %d\n\n",
-		job.WorkflowName, len(job.ChangedFiles), len(affectedApps))
-
-	finalComment := header + strings.Join(allDiffs, "\n\n---\n\n")
+	// Create and format the report
+	report := diff.NewDiffReport(job.WorkflowName, diffResults)
+	finalComment := diff.FormatReport(report)
 
 	// Post comment to GitHub
-	return ghClient.PostComment(ctx, job.PRNumber, finalComment)
+	return ghClient.PostComment(ctx, job.PRNumber, finalComment, job.WorkflowName)
 }
 
 func validatePayload(p *WebhookPayload) error {
