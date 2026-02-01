@@ -8,12 +8,17 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/tamcore/argo-diff/pkg/argocd"
 	"github.com/tamcore/argo-diff/pkg/auth"
 	"github.com/tamcore/argo-diff/pkg/config"
+	"github.com/tamcore/argo-diff/pkg/diff"
+	"github.com/tamcore/argo-diff/pkg/github"
+	"github.com/tamcore/argo-diff/pkg/matcher"
 	"github.com/tamcore/argo-diff/pkg/worker"
 )
 
@@ -212,16 +217,94 @@ func (s *Server) worker(id int) {
 
 			log.Printf("Worker %d processing job for %s PR #%d", id, job.Repository, job.PRNumber)
 
-			// TODO: Implement actual job processing
-			// This would call:
-			// 1. matcher to find affected apps
-			// 2. argocd client to fetch manifests
-			// 3. diff engine to generate diffs
-			// 4. github client to post comments
-
-			log.Printf("Worker %d completed job for %s PR #%d (stub)", id, job.Repository, job.PRNumber)
+			if err := s.processJob(context.Background(), job); err != nil {
+				log.Printf("Worker %d error processing job: %v", id, err)
+			} else {
+				log.Printf("Worker %d completed job for %s PR #%d", id, job.Repository, job.PRNumber)
+			}
 		}
 	}
+}
+
+func (s *Server) processJob(ctx context.Context, job worker.Job) error {
+	// Parse repository (owner/repo format)
+	parts := strings.Split(job.Repository, "/")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid repository format: %s", job.Repository)
+	}
+	owner, repo := parts[0], parts[1]
+
+	// Create GitHub client
+	ghClient := github.NewClient(ctx, job.GitHubToken, owner, repo)
+
+	// Create ArgoCD client
+	argoClient, err := argocd.NewClient(ctx, job.ArgocdServer, job.ArgocdToken, job.ArgocdInsecure)
+	if err != nil {
+		// Post error to GitHub
+		errorMsg := fmt.Sprintf("## ❌ Error\n\nFailed to connect to ArgoCD: %v", err)
+		_ = ghClient.PostComment(ctx, job.PRNumber, errorMsg)
+		return fmt.Errorf("create argocd client: %w", err)
+	}
+	defer argoClient.Close()
+
+	// List all ArgoCD applications
+	apps, err := argoClient.ListApplications(ctx)
+	if err != nil {
+		errorMsg := fmt.Sprintf("## ❌ Error\n\nFailed to list ArgoCD applications: %v", err)
+		_ = ghClient.PostComment(ctx, job.PRNumber, errorMsg)
+		return fmt.Errorf("list applications: %w", err)
+	}
+
+	// Match affected applications
+	affectedApps := matcher.MatchApplications(apps, job.Repository, job.ChangedFiles)
+
+	if len(affectedApps) == 0 {
+		noChangesMsg := fmt.Sprintf("## ✅ No ArgoCD Applications Affected\n\nNo applications found matching repository `%s` and changed files.", job.Repository)
+		return ghClient.PostComment(ctx, job.PRNumber, noChangesMsg)
+	}
+
+	log.Printf("Found %d affected applications", len(affectedApps))
+
+	// Generate diffs for each affected application
+	var allDiffs []string
+	for _, app := range affectedApps {
+		appName := app.Name
+
+		// Get manifests for base ref
+		baseManifests, err := argoClient.GetManifests(ctx, appName, job.BaseRef)
+		if err != nil {
+			log.Printf("Warning: failed to get base manifests for %s: %v", appName, err)
+			allDiffs = append(allDiffs, fmt.Sprintf("## ⚠️ `%s`\n\nFailed to get base manifests: %v", appName, err))
+			continue
+		}
+
+		// Get manifests for head ref
+		headManifests, err := argoClient.GetManifests(ctx, appName, job.HeadRef)
+		if err != nil {
+			log.Printf("Warning: failed to get head manifests for %s: %v", appName, err)
+			allDiffs = append(allDiffs, fmt.Sprintf("## ⚠️ `%s`\n\nFailed to get head manifests: %v", appName, err))
+			continue
+		}
+
+		// Generate diff
+		diffOutput, err := diff.GenerateDiff(baseManifests, headManifests, appName)
+		if err != nil {
+			log.Printf("Warning: failed to generate diff for %s: %v", appName, err)
+			allDiffs = append(allDiffs, fmt.Sprintf("## ⚠️ `%s`\n\nFailed to generate diff: %v", appName, err))
+			continue
+		}
+
+		allDiffs = append(allDiffs, diffOutput)
+	}
+
+	// Combine all diffs
+	header := fmt.Sprintf("# ArgoCD Diff Report\n\n**Workflow:** %s  \n**Changed Files:** %d  \n**Affected Applications:** %d\n\n",
+		job.WorkflowName, len(job.ChangedFiles), len(affectedApps))
+
+	finalComment := header + strings.Join(allDiffs, "\n\n---\n\n")
+
+	// Post comment to GitHub
+	return ghClient.PostComment(ctx, job.PRNumber, finalComment)
 }
 
 func validatePayload(p *WebhookPayload) error {
