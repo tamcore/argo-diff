@@ -19,6 +19,9 @@ type Config struct {
 
 	// Security configuration
 	RepoAllowlist []string
+
+	// Logging configuration
+	LogLevel string
 }
 
 // Load reads configuration from environment variables
@@ -28,6 +31,7 @@ func Load() (*Config, error) {
 		MetricsPort: getEnvInt("METRICS_PORT", 9090),
 		WorkerCount: getEnvInt("WORKER_COUNT", 1),
 		QueueSize:   getEnvInt("QUEUE_SIZE", 100),
+		LogLevel:    getEnvString("LOG_LEVEL", "info"),
 	}
 
 	// Parse repository allowlist (required)
@@ -109,5 +113,14 @@ func getEnvInt(key string, defaultValue int) int {
 		return defaultValue
 	}
 
+	return value
+}
+
+// getEnvString reads a string from environment variable with a default value
+func getEnvString(key string, defaultValue string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
 	return value
 }

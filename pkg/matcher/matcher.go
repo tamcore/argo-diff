@@ -79,8 +79,6 @@ func matchApp(app *appv1.Application, repo string, changedFiles []string) *Match
 	return nil
 }
 
-
-
 // isAppDefinitionFile checks if a file is an application definition for the given app name
 // Matches patterns like:
 // - applications/<app_name>.yaml
@@ -172,8 +170,6 @@ func matchesSourceWithPaths(source *appv1.ApplicationSource, repo string, change
 
 	return matched
 }
-
-
 
 // normalizeRepoURL normalizes a repository URL for comparison
 func normalizeRepoURL(url string) string {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,12 +11,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/tamcore/argo-diff/pkg/argocd"
 	"github.com/tamcore/argo-diff/pkg/auth"
 	"github.com/tamcore/argo-diff/pkg/config"
 	"github.com/tamcore/argo-diff/pkg/diff"
 	"github.com/tamcore/argo-diff/pkg/github"
+	"github.com/tamcore/argo-diff/pkg/logging"
 	"github.com/tamcore/argo-diff/pkg/matcher"
 	"github.com/tamcore/argo-diff/pkg/metrics"
 	"github.com/tamcore/argo-diff/pkg/worker"
@@ -46,13 +47,19 @@ type Server struct {
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		logging.Error("Failed to load configuration", "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("Starting argo-diff server")
-	log.Printf("Port: %d, Metrics Port: %d", cfg.Port, cfg.MetricsPort)
-	log.Printf("Workers: %d, Queue Size: %d", cfg.WorkerCount, cfg.QueueSize)
-	log.Printf("Repository Allowlist: %v", cfg.RepoAllowlist)
+	logging.Init(cfg.LogLevel)
+
+	logging.Info("Starting argo-diff server",
+		"port", cfg.Port,
+		"metrics_port", cfg.MetricsPort,
+		"workers", cfg.WorkerCount,
+		"queue_size", cfg.QueueSize,
+		"log_level", cfg.LogLevel,
+	)
 
 	srv := &Server{
 		cfg:      cfg,
@@ -78,9 +85,10 @@ func main() {
 		Handler: metricsMux,
 	}
 	go func() {
-		log.Printf("Metrics server listening on :%d", cfg.MetricsPort)
+		logging.Info("Metrics server started", "port", cfg.MetricsPort)
 		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Metrics server error: %v", err)
+			logging.Error("Metrics server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -92,9 +100,10 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Server listening on :%d", cfg.Port)
+		logging.Info("HTTP server started", "port", cfg.Port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
+			logging.Error("HTTP server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -102,25 +111,29 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
-	log.Println("Shutting down gracefully...")
+	logging.Info("Shutting down gracefully...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("Server shutdown error: %v", err)
+		logging.Error("Server shutdown error", "error", err)
 	}
 	if err := metricsServer.Shutdown(ctx); err != nil {
-		log.Printf("Metrics server shutdown error: %v", err)
+		logging.Error("Metrics server shutdown error", "error", err)
 	}
 
 	close(srv.done)
 	close(srv.jobQueue)
 
-	log.Println("Shutdown complete")
+	logging.Info("Shutdown complete")
 }
 
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
+	requestID := uuid.New().String()
+	ctx := logging.WithRequestID(r.Context(), requestID)
+	log := logging.FromContext(ctx)
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -129,28 +142,33 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	authHeader := r.Header.Get("Authorization")
 	token, err := auth.ExtractBearerToken(authHeader)
 	if err != nil {
+		log.Warn("Invalid authorization header", "error", err)
 		http.Error(w, fmt.Sprintf("Invalid authorization: %v", err), http.StatusUnauthorized)
 		return
 	}
 
-	repo, err := s.oidc.ValidateToken(r.Context(), token)
+	repo, err := s.oidc.ValidateToken(ctx, token)
 	if err != nil {
+		log.Warn("Token validation failed", "error", err)
 		http.Error(w, fmt.Sprintf("Token validation failed: %v", err), http.StatusUnauthorized)
 		return
 	}
 
 	if !s.cfg.IsRepoAllowed(repo) {
+		log.Warn("Repository not in allowlist", "repository", repo)
 		http.Error(w, "Repository not in allowlist", http.StatusForbidden)
 		return
 	}
 
 	var payload WebhookPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Warn("Invalid JSON payload", "error", err)
 		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 		return
 	}
 
 	if err := validatePayload(&payload); err != nil {
+		log.Warn("Invalid payload", "error", err)
 		http.Error(w, fmt.Sprintf("Invalid payload: %v", err), http.StatusBadRequest)
 		return
 	}
@@ -180,10 +198,18 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			"status":  "accepted",
 			"message": fmt.Sprintf("Job queued for %s PR #%d", payload.Repository, payload.PRNumber),
 		})
-		log.Printf("Queued job for %s PR #%d", payload.Repository, payload.PRNumber)
+		log.Info("Job queued",
+			"repository", payload.Repository,
+			"pr_number", payload.PRNumber,
+			"workflow", payload.WorkflowName,
+			"changed_files", len(payload.ChangedFiles),
+		)
 	default:
 		http.Error(w, "Queue full, try again later", http.StatusServiceUnavailable)
-		log.Printf("Queue full, rejected job for %s PR #%d", payload.Repository, payload.PRNumber)
+		log.Warn("Queue full, job rejected",
+			"repository", payload.Repository,
+			"pr_number", payload.PRNumber,
+		)
 	}
 }
 
@@ -205,8 +231,9 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) worker(id int) {
-	log.Printf("Worker %d started", id)
-	defer log.Printf("Worker %d stopped", id)
+	workerLog := logging.WithFields("worker_id", id)
+	workerLog.Info("Worker started")
+	defer workerLog.Info("Worker stopped")
 
 	for {
 		select {
@@ -218,7 +245,12 @@ func (s *Server) worker(id int) {
 			}
 
 			metrics.JobsInQueue.Dec()
-			log.Printf("Worker %d processing job for %s PR #%d", id, job.Repository, job.PRNumber)
+			jobLog := logging.WithFields(
+				"worker_id", id,
+				"repository", job.Repository,
+				"pr_number", job.PRNumber,
+			)
+			jobLog.Info("Processing job")
 
 			startTime := time.Now()
 			err := s.processJob(context.Background(), job)
@@ -228,16 +260,21 @@ func (s *Server) worker(id int) {
 
 			if err != nil {
 				metrics.RecordJobFailure(job.Repository)
-				log.Printf("Worker %d error processing job: %v", id, err)
+				jobLog.Error("Job failed", "error", err, "duration_seconds", duration)
 			} else {
 				metrics.RecordJobSuccess(job.Repository)
-				log.Printf("Worker %d completed job for %s PR #%d", id, job.Repository, job.PRNumber)
+				jobLog.Info("Job completed", "duration_seconds", duration)
 			}
 		}
 	}
 }
 
 func (s *Server) processJob(ctx context.Context, job worker.Job) error {
+	jobLog := logging.WithFields(
+		"repository", job.Repository,
+		"pr_number", job.PRNumber,
+	)
+
 	// Parse repository (owner/repo format)
 	parts := strings.Split(job.Repository, "/")
 	if len(parts) != 2 {
@@ -277,7 +314,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 		return ghClient.PostComment(ctx, job.PRNumber, noChangesMsg, job.WorkflowName)
 	}
 
-	log.Printf("Found %d affected applications", len(affectedApps))
+	jobLog.Info("Found affected applications", "count", len(affectedApps))
 
 	// Generate diffs for each affected application
 	var diffResults []*diff.DiffResult
@@ -307,7 +344,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 
 			baseManifests, err = argoClient.GetMultiSourceManifests(ctx, appName, baseRevisions)
 			if err != nil {
-				log.Printf("Warning: failed to get base manifests for multi-source app %s: %v", appName, err)
+				jobLog.Warn("Failed to get base manifests for multi-source app", "app", appName, "error", err)
 				diffResults = append(diffResults, &diff.DiffResult{
 					AppInfo:      appInfo,
 					ErrorMessage: fmt.Sprintf("Failed to get base manifests: %v", err),
@@ -317,7 +354,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 
 			headManifests, err = argoClient.GetMultiSourceManifests(ctx, appName, headRevisions)
 			if err != nil {
-				log.Printf("Warning: failed to get head manifests for multi-source app %s: %v", appName, err)
+				jobLog.Warn("Failed to get head manifests for multi-source app", "app", appName, "error", err)
 				diffResults = append(diffResults, &diff.DiffResult{
 					AppInfo:      appInfo,
 					ErrorMessage: fmt.Sprintf("Failed to get head manifests: %v", err),
@@ -328,7 +365,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 			// Single-source app
 			baseManifests, err = argoClient.GetManifests(ctx, appName, job.BaseRef)
 			if err != nil {
-				log.Printf("Warning: failed to get base manifests for %s: %v", appName, err)
+				jobLog.Warn("Failed to get base manifests", "app", appName, "error", err)
 				diffResults = append(diffResults, &diff.DiffResult{
 					AppInfo:      appInfo,
 					ErrorMessage: fmt.Sprintf("Failed to get base manifests: %v", err),
@@ -338,7 +375,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 
 			headManifests, err = argoClient.GetManifests(ctx, appName, job.HeadRef)
 			if err != nil {
-				log.Printf("Warning: failed to get head manifests for %s: %v", appName, err)
+				jobLog.Warn("Failed to get head manifests", "app", appName, "error", err)
 				diffResults = append(diffResults, &diff.DiffResult{
 					AppInfo:      appInfo,
 					ErrorMessage: fmt.Sprintf("Failed to get head manifests: %v", err),
@@ -350,7 +387,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 		// Generate diff
 		result, err := diff.GenerateDiff(baseManifests, headManifests, appInfo)
 		if err != nil {
-			log.Printf("Warning: failed to generate diff for %s: %v", appName, err)
+			jobLog.Warn("Failed to generate diff", "app", appName, "error", err)
 			diffResults = append(diffResults, &diff.DiffResult{
 				AppInfo:      appInfo,
 				ErrorMessage: fmt.Sprintf("Failed to generate diff: %v", err),
