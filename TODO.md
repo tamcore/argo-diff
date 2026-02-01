@@ -56,9 +56,9 @@ Remaining work to complete the argo-diff implementation as per [IMPLEMENTATION.m
 
 ---
 
-## Phase 3: Deployment Infrastructure
+## Phase 3: Deployment Infrastructure ✅
 
-### 3.1 Helm Chart
+### 3.1 Helm Chart ✅
 **Directory:** `charts/argo-diff/`
 
 ```
@@ -76,27 +76,27 @@ charts/argo-diff/
 │   └── poddisruptionbudget.yaml
 ```
 
-- [ ] Create Chart.yaml with metadata
-- [ ] Create values.yaml with sensible defaults
-- [ ] Deployment with health/readiness probes, resource limits
-- [ ] Services for app (8080) and metrics (9090)
-- [ ] Optional Ingress with TLS support
-- [ ] ServiceMonitor for Prometheus Operator
-- [ ] PodDisruptionBudget (minAvailable: 1)
+- [x] Create Chart.yaml with metadata
+- [x] Create values.yaml with sensible defaults
+- [x] Deployment with health/readiness probes, resource limits
+- [x] Services for app (8080) and metrics (9090)
+- [x] Optional Ingress with TLS support
+- [x] ServiceMonitor for Prometheus Operator
+- [x] PodDisruptionBudget (minAvailable: 1)
 
-### 3.2 GoReleaser Configuration
+### 3.2 GoReleaser Configuration ✅
 **File:** `.goreleaser.yaml`
 
-- [ ] Binary builds for linux/amd64, linux/arm64
-- [ ] Container images via `ko` to `ghcr.io/tamcore/argo-diff`
-- [ ] Debian packages (.deb)
-- [ ] Changelog generation
+- [x] Binary builds for linux/amd64, linux/arm64
+- [x] Container images via Docker buildx to `ghcr.io/tamcore/argo-diff`
+- [x] Debian packages (.deb)
+- [x] Changelog generation
 
-### 3.3 GitHub Actions Workflows
+### 3.3 GitHub Actions Workflows ✅
 **Directory:** `.github/workflows/`
 
-- [ ] `ci.yaml` - Run tests, lint, vet on PRs
-- [ ] `release.yaml` - GoReleaser on version tags
+- [x] `ci.yaml` - Run tests, lint, vet on PRs
+- [x] `release.yaml` - GoReleaser on version tags
 
 ---
 
@@ -107,7 +107,7 @@ charts/argo-diff/
 
 - [ ] `github-workflow.yaml` - Complete GitHub Actions workflow
 - [ ] `docker-compose.yaml` - Local development setup
-- [ ] `systemd.service` - Systemd unit file for .deb installs
+- [x] `systemd.service` - Systemd unit file for .deb installs
 
 ### 4.2 Kubernetes Examples
 **Directory:** `examples/kubernetes/`
