@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"sync"
 )
 
 // contextKey is a custom type for context keys to avoid collisions
@@ -16,7 +17,10 @@ const (
 	JobIDKey contextKey = "job_id"
 )
 
-var logger *slog.Logger
+var (
+	logger *slog.Logger
+	once   sync.Once
+)
 
 // Init initializes the global logger
 func Init(level string) {
@@ -43,9 +47,11 @@ func Init(level string) {
 
 // Logger returns the global logger
 func Logger() *slog.Logger {
-	if logger == nil {
-		Init("info")
-	}
+	once.Do(func() {
+		if logger == nil {
+			Init("info")
+		}
+	})
 	return logger
 }
 
