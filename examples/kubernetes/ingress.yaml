@@ -1,0 +1,35 @@
+# Example Ingress for argo-diff
+#
+# This example uses nginx ingress controller with cert-manager for TLS.
+# Adjust annotations for your ingress controller.
+#
+# Apply with: kubectl apply -f ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argo-diff
+  labels:
+    app.kubernetes.io/name: argo-diff
+    app.kubernetes.io/instance: argo-diff
+  annotations:
+    # For nginx ingress controller
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # For cert-manager
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - argo-diff.example.com
+      secretName: argo-diff-tls
+  rules:
+    - host: argo-diff.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argo-diff
+                port:
+                  number: 8080

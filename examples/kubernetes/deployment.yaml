@@ -1,0 +1,112 @@
+# Example Kubernetes deployment for argo-diff
+# For production use, consider using the Helm chart instead.
+#
+# Apply with: kubectl apply -f deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argo-diff
+  labels:
+    app.kubernetes.io/name: argo-diff
+    app.kubernetes.io/instance: argo-diff
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argo-diff
+      app.kubernetes.io/instance: argo-diff
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argo-diff
+        app.kubernetes.io/instance: argo-diff
+    spec:
+      serviceAccountName: argo-diff
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      containers:
+        - name: argo-diff
+          image: ghcr.io/tamcore/argo-diff:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: OIDC_ISSUER
+              value: "https://token.actions.githubusercontent.com"
+            - name: OIDC_AUDIENCE
+              value: "argo-diff"
+            - name: ALLOWED_REPOS
+              valueFrom:
+                secretKeyRef:
+                  name: argo-diff
+                  key: allowed-repos
+                  optional: true
+            - name: LOG_LEVEL
+              value: "info"
+            - name: WORKER_COUNT
+              value: "5"
+            - name: QUEUE_SIZE
+              value: "100"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: argo-diff
+  labels:
+    app.kubernetes.io/name: argo-diff
+    app.kubernetes.io/instance: argo-diff
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: 9090
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    app.kubernetes.io/name: argo-diff
+    app.kubernetes.io/instance: argo-diff
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argo-diff
+  labels:
+    app.kubernetes.io/name: argo-diff
+    app.kubernetes.io/instance: argo-diff
