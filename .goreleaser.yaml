@@ -27,19 +27,18 @@ builds:
 
 archives:
   - id: default
-    format: tar.gz
+    formats:
+      - tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
-    format_overrides:
-      - goos: windows
-        format: zip
 
 kos:
   - id: argo-diff
-    repository: ghcr.io/tamcore/argo-diff
+    repositories:
+      - ghcr.io/tamcore/argo-diff
     tags:
       - "{{ .Version }}"
       - latest
