@@ -10,9 +10,7 @@
 
 services:
   argo-diff:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
+    image: ghcr.io/tamcore/argo-diff:latest
     ports:
       - "8080:8080"   # HTTP API
       - "9090:9090"   # Metrics

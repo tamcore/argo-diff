@@ -37,43 +37,24 @@ archives:
       - goos: windows
         format: zip
 
-dockers:
-  - image_templates:
-      - "ghcr.io/tamcore/argo-diff:{{ .Version }}-amd64"
-    use: buildx
-    build_flag_templates:
-      - "--pull"
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.source=https://github.com/tamcore/argo-diff"
-    goarch: amd64
-
-  - image_templates:
-      - "ghcr.io/tamcore/argo-diff:{{ .Version }}-arm64"
-    use: buildx
-    build_flag_templates:
-      - "--pull"
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.source=https://github.com/tamcore/argo-diff"
-    goarch: arm64
-
-docker_manifests:
-  - name_template: "ghcr.io/tamcore/argo-diff:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/tamcore/argo-diff:{{ .Version }}-amd64"
-      - "ghcr.io/tamcore/argo-diff:{{ .Version }}-arm64"
-
-  - name_template: "ghcr.io/tamcore/argo-diff:latest"
-    image_templates:
-      - "ghcr.io/tamcore/argo-diff:{{ .Version }}-amd64"
-      - "ghcr.io/tamcore/argo-diff:{{ .Version }}-arm64"
+kos:
+  - id: argo-diff
+    repository: ghcr.io/tamcore/argo-diff
+    tags:
+      - "{{ .Version }}"
+      - latest
+    bare: true
+    preserve_import_paths: false
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    sbom: none
+    labels:
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.source: "https://github.com/tamcore/argo-diff"
 
 nfpms:
   - id: argo-diff
