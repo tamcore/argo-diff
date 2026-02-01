@@ -20,7 +20,6 @@ import (
 	"github.com/tamcore/argo-diff/pkg/github"
 	"github.com/tamcore/argo-diff/pkg/logging"
 	"github.com/tamcore/argo-diff/pkg/matcher"
-	"github.com/tamcore/argo-diff/pkg/metrics"
 	"github.com/tamcore/argo-diff/pkg/worker"
 )
 
@@ -38,10 +37,9 @@ type WebhookPayload struct {
 }
 
 type Server struct {
-	cfg      *config.Config
-	oidc     *auth.OIDCValidator
-	jobQueue chan worker.Job
-	done     chan struct{}
+	cfg  *config.Config
+	oidc *auth.OIDCValidator
+	pool *worker.Pool
 }
 
 func main() {
@@ -62,15 +60,13 @@ func main() {
 	)
 
 	srv := &Server{
-		cfg:      cfg,
-		oidc:     auth.NewOIDCValidator(),
-		jobQueue: make(chan worker.Job, cfg.QueueSize),
-		done:     make(chan struct{}),
+		cfg:  cfg,
+		oidc: auth.NewOIDCValidator(),
 	}
 
-	for i := 0; i < cfg.WorkerCount; i++ {
-		go srv.worker(i)
-	}
+	// Create and start worker pool
+	srv.pool = worker.NewPool(cfg.WorkerCount, cfg.QueueSize, srv.processJob)
+	srv.pool.Start()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook", srv.handleWebhook)
@@ -123,8 +119,8 @@ func main() {
 		logging.Error("Metrics server shutdown error", "error", err)
 	}
 
-	close(srv.done)
-	close(srv.jobQueue)
+	// Stop worker pool gracefully
+	srv.pool.Stop(25 * time.Second)
 
 	logging.Info("Shutdown complete")
 }
@@ -190,9 +186,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		ArgocdInsecure: payload.ArgocdInsecure,
 	}
 
-	select {
-	case s.jobQueue <- job:
-		metrics.JobsInQueue.Inc()
+	if s.pool.Submit(job) {
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "accepted",
@@ -204,7 +198,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			"workflow", payload.WorkflowName,
 			"changed_files", len(payload.ChangedFiles),
 		)
-	default:
+	} else {
 		http.Error(w, "Queue full, try again later", http.StatusServiceUnavailable)
 		log.Warn("Queue full, job rejected",
 			"repository", payload.Repository,
@@ -219,54 +213,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
-	select {
-	case <-s.done:
+	if !s.pool.IsReady() {
 		http.Error(w, "Shutting down", http.StatusServiceUnavailable)
 		return
-	default:
 	}
 
+	status := s.pool.Status()
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
-}
-
-func (s *Server) worker(id int) {
-	workerLog := logging.WithFields("worker_id", id)
-	workerLog.Info("Worker started")
-	defer workerLog.Info("Worker stopped")
-
-	for {
-		select {
-		case <-s.done:
-			return
-		case job, ok := <-s.jobQueue:
-			if !ok {
-				return
-			}
-
-			metrics.JobsInQueue.Dec()
-			jobLog := logging.WithFields(
-				"worker_id", id,
-				"repository", job.Repository,
-				"pr_number", job.PRNumber,
-			)
-			jobLog.Info("Processing job")
-
-			startTime := time.Now()
-			err := s.processJob(context.Background(), job)
-			duration := time.Since(startTime).Seconds()
-
-			metrics.ProcessingDuration.WithLabelValues(job.Repository).Observe(duration)
-
-			if err != nil {
-				metrics.RecordJobFailure(job.Repository)
-				jobLog.Error("Job failed", "error", err, "duration_seconds", duration)
-			} else {
-				metrics.RecordJobSuccess(job.Repository)
-				jobLog.Info("Job completed", "duration_seconds", duration)
-			}
-		}
-	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":       "ready",
+		"queue_length": status.QueueLength,
+		"queue_size":   status.QueueSize,
+		"active_jobs":  status.ActiveJobs,
+		"workers":      status.WorkerCount,
+	})
 }
 
 func (s *Server) processJob(ctx context.Context, job worker.Job) error {
