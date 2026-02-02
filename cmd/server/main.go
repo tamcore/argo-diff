@@ -99,8 +99,8 @@ func main() {
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      mux,
-		ReadTimeout:  5 * time.Minute,  // Increased for sync processing
-		WriteTimeout: 5 * time.Minute,  // Increased for sync processing
+		ReadTimeout:  5 * time.Minute, // Increased for sync processing
+		WriteTimeout: 5 * time.Minute, // Increased for sync processing
 	}
 
 	go func() {
