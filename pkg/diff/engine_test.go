@@ -76,8 +76,8 @@ spec:
 	if !strings.Contains(diff, "test-app") {
 		t.Error("diff should contain app name")
 	}
-	if !strings.Contains(diff, "Modified") {
-		t.Error("diff should indicate modification")
+	if !strings.Contains(diff, "=====") {
+		t.Error("diff should indicate modification with ===== header")
 	}
 }
 
