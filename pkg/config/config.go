@@ -27,8 +27,8 @@ type Config struct {
 	RateLimitPerRepo int // requests per minute per repository (0 = disabled)
 
 	// ArgoCD configuration
-	ArgocdServer   string
-	ArgocdInsecure bool
+	ArgocdServer    string
+	ArgocdPlainText bool
 }
 
 // Load reads configuration from environment variables
@@ -41,7 +41,7 @@ func Load() (*Config, error) {
 		LogLevel:         getEnvString("LOG_LEVEL", "info"),
 		RateLimitPerRepo: getEnvInt("RATE_LIMIT_PER_REPO", 10), // 10 requests/min default
 		ArgocdServer:     getEnvString("ARGOCD_SERVER", "argocd-server:80"),
-		ArgocdInsecure:   getEnvBool("ARGOCD_INSECURE", true),
+		ArgocdPlainText:  getEnvBool("ARGOCD_PLAINTEXT", true),
 	}
 
 	// Parse repository allowlist (required)

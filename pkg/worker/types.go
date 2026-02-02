@@ -12,7 +12,7 @@ type Job struct {
 	WorkflowName string
 
 	// ArgoCD information
-	ArgocdServer   string
-	ArgocdToken    string
-	ArgocdInsecure bool
+	ArgocdServer    string
+	ArgocdToken     string
+	ArgocdPlainText bool
 }

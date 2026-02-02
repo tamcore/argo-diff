@@ -55,8 +55,8 @@ spec:
               value: {{ .Values.workers.queueSize | quote }}
             - name: ARGOCD_SERVER
               value: {{ .Values.argocd.server | quote }}
-            - name: ARGOCD_INSECURE
-              value: {{ .Values.argocd.insecure | quote }}
+            - name: ARGOCD_PLAINTEXT
+              value: {{ .Values.argocd.plaintext | quote }}
           {{- if .Values.probes.liveness.enabled }}
           livenessProbe:
             httpGet:

@@ -20,11 +20,11 @@ type Client struct {
 }
 
 // NewClient creates a new ArgoCD client
-func NewClient(ctx context.Context, server, token string, insecureTLS bool) (*Client, error) {
+func NewClient(ctx context.Context, server, token string, plainText bool) (*Client, error) {
 	opts := apiclient.ClientOptions{
 		ServerAddr: server,
 		AuthToken:  token,
-		Insecure:   insecureTLS,
+		PlainText:  plainText,
 		GRPCWeb:    true,
 	}
 

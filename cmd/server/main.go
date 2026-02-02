@@ -59,7 +59,7 @@ func main() {
 		"log_level", cfg.LogLevel,
 		"rate_limit_per_repo", cfg.RateLimitPerRepo,
 		"argocd_server", cfg.ArgocdServer,
-		"argocd_insecure", cfg.ArgocdInsecure,
+		"argocd_plaintext", cfg.ArgocdPlainText,
 	)
 
 	srv := &Server{
@@ -194,16 +194,16 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job := worker.Job{
-		Repository:     payload.Repository,
-		PRNumber:       payload.PRNumber,
-		BaseRef:        payload.BaseRef,
-		HeadRef:        payload.HeadRef,
-		ChangedFiles:   payload.ChangedFiles,
-		GitHubToken:    payload.GitHubToken,
-		WorkflowName:   payload.WorkflowName,
-		ArgocdServer:   s.cfg.ArgocdServer,
-		ArgocdToken:    payload.ArgocdToken,
-		ArgocdInsecure: s.cfg.ArgocdInsecure,
+		Repository:      payload.Repository,
+		PRNumber:        payload.PRNumber,
+		BaseRef:         payload.BaseRef,
+		HeadRef:         payload.HeadRef,
+		ChangedFiles:    payload.ChangedFiles,
+		GitHubToken:     payload.GitHubToken,
+		WorkflowName:    payload.WorkflowName,
+		ArgocdServer:    s.cfg.ArgocdServer,
+		ArgocdToken:     payload.ArgocdToken,
+		ArgocdPlainText: s.cfg.ArgocdPlainText,
 	}
 
 	// Check if sync processing is requested
@@ -304,7 +304,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 	}
 
 	// Create ArgoCD client
-	argoClient, err := argocd.NewClient(ctx, job.ArgocdServer, job.ArgocdToken, job.ArgocdInsecure)
+	argoClient, err := argocd.NewClient(ctx, job.ArgocdServer, job.ArgocdToken, job.ArgocdPlainText)
 	if err != nil {
 		postError(fmt.Sprintf("Failed to connect to ArgoCD: %v", err))
 		return fmt.Errorf("create argocd client: %w", err)

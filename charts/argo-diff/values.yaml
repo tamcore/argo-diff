@@ -30,8 +30,8 @@ logging:
 argocd:
   # ArgoCD server address (default assumes in-cluster deployment)
   server: "argocd-server:80"
-  # Skip TLS verification (true when using in-cluster service)
-  insecure: true
+  # Use plain HTTP instead of HTTPS (true when using in-cluster service on port 80)
+  plaintext: true
 
 # Worker configuration
 workers:
