@@ -40,7 +40,7 @@ kos:
     repositories:
       - ghcr.io/tamcore/argo-diff
     tags:
-      - "{{ .Version }}"
+      - "{{.Tag}}"
       - latest
     bare: true
     preserve_import_paths: false
