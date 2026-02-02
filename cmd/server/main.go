@@ -25,16 +25,14 @@ import (
 )
 
 type WebhookPayload struct {
-	GitHubToken    string   `json:"github_token"`
-	ArgocdToken    string   `json:"argocd_token"`
-	ArgocdServer   string   `json:"argocd_server"`
-	ArgocdInsecure bool     `json:"argocd_insecure"`
-	Repository     string   `json:"repository"`
-	PRNumber       int      `json:"pr_number"`
-	BaseRef        string   `json:"base_ref"`
-	HeadRef        string   `json:"head_ref"`
-	ChangedFiles   []string `json:"changed_files"`
-	WorkflowName   string   `json:"workflow_name"`
+	GitHubToken  string   `json:"github_token"`
+	ArgocdToken  string   `json:"argocd_token"`
+	Repository   string   `json:"repository"`
+	PRNumber     int      `json:"pr_number"`
+	BaseRef      string   `json:"base_ref"`
+	HeadRef      string   `json:"head_ref"`
+	ChangedFiles []string `json:"changed_files"`
+	WorkflowName string   `json:"workflow_name"`
 }
 
 type Server struct {
@@ -60,6 +58,8 @@ func main() {
 		"queue_size", cfg.QueueSize,
 		"log_level", cfg.LogLevel,
 		"rate_limit_per_repo", cfg.RateLimitPerRepo,
+		"argocd_server", cfg.ArgocdServer,
+		"argocd_insecure", cfg.ArgocdInsecure,
 	)
 
 	srv := &Server{
@@ -201,9 +201,9 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		ChangedFiles:   payload.ChangedFiles,
 		GitHubToken:    payload.GitHubToken,
 		WorkflowName:   payload.WorkflowName,
-		ArgocdServer:   payload.ArgocdServer,
+		ArgocdServer:   s.cfg.ArgocdServer,
 		ArgocdToken:    payload.ArgocdToken,
-		ArgocdInsecure: payload.ArgocdInsecure,
+		ArgocdInsecure: s.cfg.ArgocdInsecure,
 	}
 
 	// Check if sync processing is requested
@@ -456,7 +456,6 @@ const (
 	maxWorkflowNameLength = 128
 	maxChangedFiles       = 1000
 	maxFilePathLength     = 512
-	maxServerLength       = 256
 )
 
 func validatePayload(p *WebhookPayload) error {
@@ -465,12 +464,6 @@ func validatePayload(p *WebhookPayload) error {
 	}
 	if p.ArgocdToken == "" {
 		return fmt.Errorf("argocd_token is required")
-	}
-	if p.ArgocdServer == "" {
-		return fmt.Errorf("argocd_server is required")
-	}
-	if len(p.ArgocdServer) > maxServerLength {
-		return fmt.Errorf("argocd_server exceeds maximum length of %d", maxServerLength)
 	}
 	if p.Repository == "" {
 		return fmt.Errorf("repository is required")

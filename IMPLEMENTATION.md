@@ -70,18 +70,18 @@ Transform the 734-line bash script into a Go HTTP service using ArgoCD's officia
 - `REPO_ALLOWLIST` (required) - Comma-separated list of allowed repos (supports wildcards: `owner/repo` or `org/*`)
 - `PORT` (default: 8080) - HTTP server port
 - `METRICS_PORT` (default: 9090) - Metrics server port
+- `ARGOCD_SERVER` (default: `argocd-server:80`) - ArgoCD server address
+- `ARGOCD_INSECURE` (default: `true`) - Skip TLS verification
 
 **Webhook Payload:**
 ```json
 {
   "github_token": "ghp_xxx",
   "argocd_token": "xxx",
-  "argocd_server": "argocd.example.com",
-  "argocd_insecure": false,
   "repository": "owner/repo",
   "pr_number": 123,
-  "base_ref": "master",
-  "head_ref": "abc123def456",
+  "base_ref": "abc123",
+  "head_ref": "def456",
   "changed_files": ["app1/deployment.yaml", "app2/service.yaml"],
   "workflow_name": "ArgoCD Diff"
 }
@@ -434,18 +434,16 @@ jobs:
 
       - name: Trigger argo-diff
         run: |
-          curl -X POST https://argo-diff.example.com/webhook \
+          curl -X POST https://argo-diff.example.com/webhook?sync=true \
             -H "Authorization: Bearer ${{ steps.oidc.outputs.token }}" \
             -H "Content-Type: application/json" \
             -d '{
               "github_token": "${{ secrets.GITHUB_TOKEN }}",
               "argocd_token": "${{ secrets.ARGOCD_TOKEN }}",
-              "argocd_server": "argocd.example.com",
-              "argocd_insecure": false,
               "repository": "${{ github.repository }}",
               "pr_number": ${{ github.event.pull_request.number }},
-              "base_ref": "${{ github.base_ref }}",
-              "head_ref": "${{ github.event.pull_request.head.sha }}",
+              "base_ref": "${{ github.event.pull_request.base.sha }}",
+              "head_ref": "${{ github.sha }}",
               "changed_files": ${{ steps.changes.outputs.files }},
               "workflow_name": "ArgoCD Diff"
             }'
@@ -459,6 +457,8 @@ docker run -d \
   -e WORKER_COUNT=3 \
   -e QUEUE_SIZE=100 \
   -e REPO_ALLOWLIST="myorg/*" \
+  -e ARGOCD_SERVER="argocd-server:80" \
+  -e ARGOCD_INSECURE="true" \
   ghcr.io/tamcore/argo-diff:latest
 ```
 

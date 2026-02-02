@@ -26,6 +26,13 @@ allowedRepos: ""
 logging:
   level: "info"  # debug, info, warn, error
 
+# ArgoCD configuration
+argocd:
+  # ArgoCD server address (default assumes in-cluster deployment)
+  server: "argocd-server:80"
+  # Skip TLS verification (true when using in-cluster service)
+  insecure: true
+
 # Worker configuration
 workers:
   count: 5

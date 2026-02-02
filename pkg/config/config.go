@@ -25,6 +25,10 @@ type Config struct {
 
 	// Rate limiting configuration
 	RateLimitPerRepo int // requests per minute per repository (0 = disabled)
+
+	// ArgoCD configuration
+	ArgocdServer   string
+	ArgocdInsecure bool
 }
 
 // Load reads configuration from environment variables
@@ -36,6 +40,8 @@ func Load() (*Config, error) {
 		QueueSize:        getEnvInt("QUEUE_SIZE", 100),
 		LogLevel:         getEnvString("LOG_LEVEL", "info"),
 		RateLimitPerRepo: getEnvInt("RATE_LIMIT_PER_REPO", 10), // 10 requests/min default
+		ArgocdServer:     getEnvString("ARGOCD_SERVER", "argocd-server:80"),
+		ArgocdInsecure:   getEnvBool("ARGOCD_INSECURE", true),
 	}
 
 	// Parse repository allowlist (required)
@@ -47,6 +53,11 @@ func Load() (*Config, error) {
 	cfg.RepoAllowlist = parseAllowlist(allowlistStr)
 	if len(cfg.RepoAllowlist) == 0 {
 		return nil, fmt.Errorf("REPO_ALLOWLIST must contain at least one entry")
+	}
+
+	// Validate ArgoCD server
+	if cfg.ArgocdServer == "" {
+		return nil, fmt.Errorf("ARGOCD_SERVER environment variable is required")
 	}
 
 	return cfg, nil
@@ -126,5 +137,20 @@ func getEnvString(key string, defaultValue string) string {
 	if value == "" {
 		return defaultValue
 	}
+	return value
+}
+
+// getEnvBool reads a boolean from environment variable with a default value
+func getEnvBool(key string, defaultValue bool) bool {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+
+	value, err := strconv.ParseBool(valueStr)
+	if err != nil {
+		return defaultValue
+	}
+
 	return value
 }

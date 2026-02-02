@@ -40,6 +40,8 @@ All configuration is via environment variables:
 | `QUEUE_SIZE` | Job queue buffer size | `100` |
 | `REPO_ALLOWLIST` | Comma-separated list of allowed repos | *(required)* |
 | `GITHUB_OIDC_ISSUER` | GitHub OIDC issuer URL | `https://token.actions.githubusercontent.com` |
+| `ARGOCD_SERVER` | ArgoCD server address | `argocd-server:80` |
+| `ARGOCD_INSECURE` | Skip TLS verification | `true` |
 
 ## API
 
@@ -55,12 +57,10 @@ Accepts webhook payloads to generate diffs.
 {
   "github_token": "ghp_...",
   "argocd_token": "argocd.token...",
-  "argocd_server": "argocd.example.com",
-  "argocd_insecure": false,
   "repository": "owner/repo",
   "pr_number": 123,
-  "base_ref": "main",
-  "head_ref": "feature-branch",
+  "base_ref": "abc123",
+  "head_ref": "def456",
   "changed_files": ["apps/app1/deployment.yaml"],
   "workflow_name": "ArgoCD Diff"
 }
@@ -187,14 +187,12 @@ jobs:
 
       - name: Trigger diff
         run: |
-          curl -X POST https://argo-diff.example.com/webhook \
+          curl -X POST https://argo-diff.example.com/webhook?sync=true \
             -H "Authorization: Bearer ${{ steps.oidc.outputs.token }}" \
             -H "Content-Type: application/json" \
             -d '{
               "github_token": "${{ secrets.GITHUB_TOKEN }}",
               "argocd_token": "${{ secrets.ARGOCD_TOKEN }}",
-              "argocd_server": "argocd.example.com",
-              "argocd_insecure": false,
               "repository": "${{ github.repository }}",
               "pr_number": ${{ github.event.pull_request.number }},
               "base_ref": "${{ github.event.pull_request.base.sha }}",
