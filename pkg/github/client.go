@@ -166,6 +166,13 @@ func (c *Client) DeleteOldComments(ctx context.Context, prNumber int, workflowNa
 		ListOptions: github.ListOptions{PerPage: 100},
 	}
 
+	identifier := workflowIdentifier(workflowName)
+	slog.Info("DeleteOldComments: looking for comments",
+		"pr", prNumber,
+		"workflow", workflowName,
+		"identifier", identifier,
+	)
+
 	for {
 		comments, resp, err := c.client.Issues.ListComments(ctx, c.owner, c.repo, prNumber, opts)
 		metrics.RecordGithubCall("list_comments", err)
@@ -179,13 +186,33 @@ func (c *Client) DeleteOldComments(ctx context.Context, prNumber int, workflowNa
 			return fmt.Errorf("list comments: %w", err)
 		}
 
+		slog.Info("DeleteOldComments: found comments", "count", len(comments), "page", opts.Page)
+
 		for _, comment := range comments {
-			if comment.Body != nil && isWorkflowComment(*comment.Body, workflowName) {
+			if comment.Body == nil {
+				continue
+			}
+			// Log first 100 chars of each comment for debugging
+			preview := *comment.Body
+			if len(preview) > 100 {
+				preview = preview[:100]
+			}
+			isMatch := isWorkflowComment(*comment.Body, workflowName)
+			slog.Info("DeleteOldComments: checking comment",
+				"id", *comment.ID,
+				"matches", isMatch,
+				"preview", preview,
+			)
+
+			if isMatch {
+				slog.Info("DeleteOldComments: deleting comment", "id", *comment.ID)
 				_, err = c.client.Issues.DeleteComment(ctx, c.owner, c.repo, *comment.ID)
 				metrics.RecordGithubCall("delete_comment", err)
 				if err != nil {
+					slog.Error("DeleteOldComments: failed to delete", "id", *comment.ID, "error", err)
 					return fmt.Errorf("delete comment %d: %w", *comment.ID, err)
 				}
+				slog.Info("DeleteOldComments: successfully deleted comment", "id", *comment.ID)
 			}
 		}
 
