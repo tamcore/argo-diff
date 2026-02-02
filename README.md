@@ -129,20 +129,12 @@ See [AGENTS.md](AGENTS.md) for semantic commit guidelines.
 
 ## Deployment
 
-### Docker
+### Helm Chart
 
-```dockerfile
-FROM golang:1.25-alpine AS builder
-WORKDIR /app
-COPY go.* ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -o /argo-diff ./cmd/server
-
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
-COPY --from=builder /argo-diff /argo-diff
-ENTRYPOINT ["/argo-diff"]
+```bash
+helm install argo-diff ./charts/argo-diff \
+  --set allowedRepos="myorg/*" \
+  --set argocd.server="argocd-server:80"
 ```
 
 ### Kubernetes
