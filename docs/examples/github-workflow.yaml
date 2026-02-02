@@ -7,6 +7,8 @@
 # 1. Deploy argo-diff service and expose it via ingress
 # 2. Configure OIDC audience in argo-diff to match this workflow
 # 3. Add your repository to the allowed repos list
+# 4. Set repository variables: ARGO_DIFF_URL, ARGOCD_SERVER
+# 5. Set repository secrets: ARGOCD_TOKEN
 
 name: ArgoCD Diff Preview
 
@@ -15,14 +17,11 @@ on:
     branches:
       - main
       - master
-    paths:
-      # Trigger on changes to Kubernetes manifests, Helm charts, or ArgoCD apps
-      - 'charts/**'
-      - 'manifests/**'
-      - 'applications/**'
-      - 'kustomize/**'
-      - '*.yaml'
-      - '*.yml'
+    # Optionally filter by paths to only trigger on relevant changes
+    # paths:
+    #   - 'charts/**'
+    #   - 'manifests/**'
+    #   - 'applications/**'
 
 permissions:
   contents: read
@@ -40,65 +39,79 @@ jobs:
           fetch-depth: 0  # Full history for accurate diff
 
       - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v44
-        with:
-          json: true
-          escape_json: false
+        id: changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Use GitHub API to get PR changed files
+          # This is more reliable than git diff for rebased PRs
+          files=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --paginate \
+            "/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --jq '[.[].filename]')
+          echo "files=$files" >> $GITHUB_OUTPUT
 
       - name: Get OIDC token
         id: oidc
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const token = await core.getIDToken('argo-diff');
-            core.setSecret(token);
-            core.setOutput('token', token);
+        run: |
+          AUTH="Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+          URL="$ACTIONS_ID_TOKEN_REQUEST_URL&audience=argo-diff"
+          token=$(curl -sS -H "$AUTH" "$URL" | jq -r .value)
+          echo "::add-mask::$token"
+          echo "token=$token" >> $GITHUB_OUTPUT
 
       - name: Trigger argo-diff
         env:
           ARGO_DIFF_URL: ${{ vars.ARGO_DIFF_URL }}  # e.g., https://argo-diff.example.com
           ARGOCD_SERVER: ${{ vars.ARGOCD_SERVER }}  # e.g., argocd.example.com
           ARGOCD_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
-          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.sha }}
         run: |
           # Build the payload
-          PAYLOAD=$(jq -n \
-            --arg repo "${{ github.repository }}" \
-            --arg pr "${{ github.event.pull_request.number }}" \
-            --arg base "${{ github.event.pull_request.base.ref }}" \
-            --arg head "${{ github.event.pull_request.head.ref }}" \
-            --arg github_token "${{ secrets.GITHUB_TOKEN }}" \
-            --arg argocd_server "$ARGOCD_SERVER" \
+          PAYLOAD=$(jq -nc \
+            --arg github_token "$GITHUB_TOKEN" \
             --arg argocd_token "$ARGOCD_TOKEN" \
+            --arg argocd_server "$ARGOCD_SERVER" \
+            --arg repository "$REPOSITORY" \
+            --argjson pr_number "$PR_NUMBER" \
+            --arg base_ref "$BASE_REF" \
+            --arg head_ref "$HEAD_REF" \
             --argjson changed_files "$CHANGED_FILES" \
             '{
-              repository: $repo,
-              pr_number: ($pr | tonumber),
-              base_ref: $base,
-              head_ref: $head,
               github_token: $github_token,
-              argocd_server: $argocd_server,
               argocd_token: $argocd_token,
+              argocd_server: $argocd_server,
+              repository: $repository,
+              pr_number: $pr_number,
+              base_ref: $base_ref,
+              head_ref: $head_ref,
               changed_files: $changed_files,
               workflow_name: "ArgoCD Diff Preview"
             }')
 
-          # Send request to argo-diff
-          HTTP_CODE=$(curl -s -o response.txt -w "%{http_code}" \
-            -X POST \
+          # Send request to argo-diff with sync=true to process synchronously
+          # This ensures the GitHub token is still valid when posting comments
+          response=$(curl -sS -w "\n%{http_code}" -X POST "$ARGO_DIFF_URL/webhook?sync=true" \
+            --max-time 300 \
             -H "Authorization: Bearer $OIDC_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD" \
-            "$ARGO_DIFF_URL/webhook")
+            -d "$PAYLOAD")
 
-          # Check response
-          if [ "$HTTP_CODE" -eq 202 ]; then
-            echo "✅ Diff job queued successfully"
-            cat response.txt
-          else
-            echo "❌ Failed to queue diff job (HTTP $HTTP_CODE)"
-            cat response.txt
+          http_code=$(echo "$response" | tail -n 1)
+          body=$(echo "$response" | sed '$d')
+
+          if [[ "$http_code" != "202" && "$http_code" != "200" ]]; then
+            echo "Error: argo-diff webhook returned $http_code"
+            echo "Response: $body"
             exit 1
           fi
+
+          echo "Diff completed successfully"
