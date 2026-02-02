@@ -3,12 +3,13 @@ package github
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"regexp"
 	"strings"
 
 	"github.com/google/go-github/v68/github"
 	"github.com/tamcore/argo-diff/pkg/metrics"
-	"golang.org/x/oauth2"
 )
 
 const (
@@ -21,17 +22,44 @@ type Client struct {
 	client *github.Client
 	owner  string
 	repo   string
+	token  string
 }
 
 // NewClient creates a new GitHub API client
 func NewClient(ctx context.Context, token, owner, repo string) *Client {
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-	tc := oauth2.NewClient(ctx, ts)
+	// Use go-github's built-in auth token method
+	client := github.NewClient(nil).WithAuthToken(token)
+
+	slog.Info("Created GitHub client",
+		"owner", owner,
+		"repo", repo,
+		"token_length", len(token),
+	)
+
 	return &Client{
-		client: github.NewClient(tc),
+		client: client,
 		owner:  owner,
 		repo:   repo,
+		token:  token,
 	}
+}
+
+// makeDirectRequest makes a direct HTTP request to the GitHub API for debugging
+func (c *Client) makeDirectRequest(ctx context.Context, url string) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "token "+c.token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("User-Agent", "argo-diff")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, nil
 }
 
 // workflowIdentifier returns the comment identifier for a specific workflow
@@ -124,6 +152,16 @@ func (c *Client) PostCommentLegacy(ctx context.Context, prNumber int, body strin
 
 // DeleteOldComments deletes old argo-diff comments from a pull request for a specific workflow
 func (c *Client) DeleteOldComments(ctx context.Context, prNumber int, workflowName string) error {
+	// Debug: verify token works with direct HTTP call before using go-github
+	testURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/comments?per_page=1",
+		c.owner, c.repo, prNumber)
+	statusCode, err := c.makeDirectRequest(ctx, testURL)
+	if err != nil {
+		slog.Error("Direct HTTP test failed in DeleteOldComments", "error", err)
+	} else {
+		slog.Info("Direct HTTP test in DeleteOldComments", "status_code", statusCode, "url", testURL)
+	}
+
 	opts := &github.IssueListCommentsOptions{
 		ListOptions: github.ListOptions{PerPage: 100},
 	}
@@ -132,6 +170,12 @@ func (c *Client) DeleteOldComments(ctx context.Context, prNumber int, workflowNa
 		comments, resp, err := c.client.Issues.ListComments(ctx, c.owner, c.repo, prNumber, opts)
 		metrics.RecordGithubCall("list_comments", err)
 		if err != nil {
+			slog.Error("go-github ListComments failed",
+				"error", err,
+				"owner", c.owner,
+				"repo", c.repo,
+				"pr", prNumber,
+			)
 			return fmt.Errorf("list comments: %w", err)
 		}
 

@@ -211,19 +211,27 @@ func TestNormalizeRepoURL(t *testing.T) {
 	}{
 		{
 			input: "https://github.com/user/repo.git",
-			want:  "github.com/user/repo",
+			want:  "user/repo",
 		},
 		{
 			input: "git@github.com:user/repo.git",
-			want:  "github.com/user/repo",
+			want:  "user/repo",
 		},
 		{
 			input: "ssh://git@github.com/user/repo",
-			want:  "github.com/user/repo",
+			want:  "user/repo",
 		},
 		{
 			input: "https://GitHub.com/User/Repo/",
-			want:  "github.com/user/repo",
+			want:  "user/repo",
+		},
+		{
+			input: "user/repo",
+			want:  "user/repo",
+		},
+		{
+			input: "User/Repo",
+			want:  "user/repo",
 		},
 	}
 

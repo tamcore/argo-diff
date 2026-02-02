@@ -99,8 +99,8 @@ func main() {
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		ReadTimeout:  5 * time.Minute,  // Increased for sync processing
+		WriteTimeout: 5 * time.Minute,  // Increased for sync processing
 	}
 
 	go func() {
@@ -206,7 +206,39 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		ArgocdInsecure: payload.ArgocdInsecure,
 	}
 
-	if s.pool.Submit(job) {
+	// Check if sync processing is requested
+	syncMode := r.URL.Query().Get("sync") == "true"
+
+	if syncMode {
+		// Process synchronously - this keeps the connection open
+		// and the GitHub token valid until we're done
+		log.Info("Processing job synchronously",
+			"repository", payload.Repository,
+			"pr_number", payload.PRNumber,
+			"workflow", payload.WorkflowName,
+			"changed_files", len(payload.ChangedFiles),
+		)
+
+		if err := s.processJob(ctx, job); err != nil {
+			log.Error("Sync job failed",
+				"repository", payload.Repository,
+				"pr_number", payload.PRNumber,
+				"error", err,
+			)
+			http.Error(w, fmt.Sprintf("Job failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "completed",
+			"message": fmt.Sprintf("Job completed for %s PR #%d", payload.Repository, payload.PRNumber),
+		})
+		log.Info("Sync job completed",
+			"repository", payload.Repository,
+			"pr_number", payload.PRNumber,
+		)
+	} else if s.pool.Submit(job) {
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "accepted",
@@ -254,6 +286,37 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 		"repository", job.Repository,
 		"pr_number", job.PRNumber,
 	)
+
+	// Debug: Log token lengths and prefix (first 4 chars)
+	tokenPrefix := job.GitHubToken
+	if len(tokenPrefix) > 4 {
+		tokenPrefix = tokenPrefix[:4]
+	}
+	logging.Info("Processing job with tokens",
+		"repository", job.Repository,
+		"pr_number", job.PRNumber,
+		"github_token_length", len(job.GitHubToken),
+		"github_token_prefix", tokenPrefix,
+		"argocd_token_length", len(job.ArgocdToken),
+	)
+
+	// Debug: Test GitHub API directly with raw HTTP
+	testURL := fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments?per_page=1",
+		job.Repository, job.PRNumber)
+	req, _ := http.NewRequestWithContext(ctx, "GET", testURL, nil)
+	req.Header.Set("Authorization", "token "+job.GitHubToken)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("User-Agent", "argo-diff")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		logging.Error("Debug HTTP test failed", "error", err)
+	} else {
+		logging.Info("Debug HTTP test result",
+			"status_code", resp.StatusCode,
+			"url", testURL,
+		)
+		resp.Body.Close()
+	}
 
 	// Parse repository (owner/repo format)
 	parts := strings.Split(job.Repository, "/")

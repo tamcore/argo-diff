@@ -1,6 +1,7 @@
 package matcher
 
 import (
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -26,12 +27,20 @@ func MatchApplications(apps []*appv1.Application, repo string, changedFiles []st
 
 // MatchApplicationsWithDetails returns applications affected by changed files with match details
 func MatchApplicationsWithDetails(apps []*appv1.Application, repo string, changedFiles []string) []*MatchResult {
+	slog.Info("Starting application matching",
+		"repo", repo,
+		"normalizedRepo", normalizeRepoURL(repo),
+		"changedFiles", changedFiles,
+		"totalApps", len(apps))
+
 	var results []*MatchResult
 	for _, app := range apps {
 		if result := matchApp(app, repo, changedFiles); result != nil {
 			results = append(results, result)
 		}
 	}
+
+	slog.Info("Matching complete", "matchedApps", len(results))
 	return results
 }
 
@@ -133,6 +142,13 @@ func matchesSourceWithPaths(source *appv1.ApplicationSource, repo string, change
 	sourceRepo := normalizeRepoURL(source.RepoURL)
 	targetRepo := normalizeRepoURL(repo)
 
+	slog.Info("Comparing repos",
+		"sourceRepoURL", source.RepoURL,
+		"sourceRepoNormalized", sourceRepo,
+		"targetRepo", repo,
+		"targetRepoNormalized", targetRepo,
+		"sourcePath", source.Path)
+
 	if sourceRepo != targetRepo {
 		return nil
 	}
@@ -183,6 +199,21 @@ func normalizeRepoURL(url string) string {
 	// Handle SSH format (git@github.com:user/repo)
 	url = strings.TrimPrefix(url, "git@")
 	url = strings.ReplaceAll(url, ":", "/")
+	// Handle short format (owner/repo) - assume github.com
+	if !strings.Contains(url, "/") || strings.Count(url, "/") == 1 {
+		// If it's just owner/repo without a host, don't add one
+		// Let the comparison work on just the owner/repo part
+		if !strings.Contains(url, ".") {
+			// No dots means no host - extract just the path
+			return url
+		}
+	}
+	// If full URL with host, extract just owner/repo for comparison
+	parts := strings.Split(url, "/")
+	if len(parts) >= 3 {
+		// Has host like github.com/owner/repo - return just owner/repo
+		return strings.Join(parts[1:], "/")
+	}
 	return url
 }
 
