@@ -84,6 +84,10 @@ type DiffResult struct {
 	Diffs        []string // Individual resource diffs
 	HasChanges   bool
 	ErrorMessage string
+	// Resource change counts
+	ResourcesAdded    int
+	ResourcesModified int
+	ResourcesDeleted  int
 }
 
 // DiffReport contains the complete diff report for all applications

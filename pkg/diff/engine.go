@@ -69,6 +69,7 @@ func GenerateDiff(baseManifests, headManifests []string, appInfo *AppInfo) (*Dif
 				diff := generateResourceDiff(base, head)
 				result.Diffs = append(result.Diffs, diff)
 				result.HasChanges = true
+				result.ResourcesModified++
 			}
 		} else {
 			// Resource deleted
@@ -76,6 +77,7 @@ func GenerateDiff(baseManifests, headManifests []string, appInfo *AppInfo) (*Dif
 				base.key(), base.raw)
 			result.Diffs = append(result.Diffs, diff)
 			result.HasChanges = true
+			result.ResourcesDeleted++
 		}
 	}
 
@@ -86,6 +88,7 @@ func GenerateDiff(baseManifests, headManifests []string, appInfo *AppInfo) (*Dif
 				head.key(), head.raw)
 			result.Diffs = append(result.Diffs, diff)
 			result.HasChanges = true
+			result.ResourcesAdded++
 		}
 	}
 

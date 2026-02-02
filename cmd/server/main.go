@@ -20,6 +20,7 @@ import (
 	"github.com/tamcore/argo-diff/pkg/github"
 	"github.com/tamcore/argo-diff/pkg/logging"
 	"github.com/tamcore/argo-diff/pkg/matcher"
+	"github.com/tamcore/argo-diff/pkg/metrics"
 	"github.com/tamcore/argo-diff/pkg/ratelimit"
 	"github.com/tamcore/argo-diff/pkg/worker"
 )
@@ -172,6 +173,8 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// Check rate limit
 	if s.limiter != nil && !s.limiter.Allow(repo) {
 		log.Warn("Rate limit exceeded", "repository", repo)
+		metrics.RecordRateLimitHit(repo)
+		metrics.RecordWebhookReceived(repo, "rate_limited")
 		http.Error(w, "Rate limit exceeded, try again later", http.StatusTooManyRequests)
 		return
 	}
@@ -225,10 +228,12 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 				"pr_number", payload.PRNumber,
 				"error", err,
 			)
+			metrics.RecordWebhookReceived(payload.Repository, "sync_failed")
 			http.Error(w, fmt.Sprintf("Job failed: %v", err), http.StatusInternalServerError)
 			return
 		}
 
+		metrics.RecordWebhookReceived(payload.Repository, "sync_completed")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "completed",
@@ -239,6 +244,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			"pr_number", payload.PRNumber,
 		)
 	} else if s.pool.Submit(job) {
+		metrics.RecordWebhookReceived(payload.Repository, "queued")
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "accepted",
@@ -251,6 +257,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			"changed_files", len(payload.ChangedFiles),
 		)
 	} else {
+		metrics.RecordWebhookReceived(payload.Repository, "queue_full")
 		http.Error(w, "Queue full, try again later", http.StatusServiceUnavailable)
 		log.Warn("Queue full, job rejected",
 			"repository", payload.Repository,
@@ -321,6 +328,9 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 	// Match affected applications
 	affectedApps := matcher.MatchApplications(apps, job.Repository, job.ChangedFiles)
 
+	// Record how many applications were affected
+	metrics.RecordApplicationsAffected(job.Repository, len(affectedApps))
+
 	if len(affectedApps) == 0 {
 		noChangesMsg := fmt.Sprintf("## ✅ No ArgoCD Applications Affected\n\nNo applications found matching repository `%s` and changed files.", job.Repository)
 		return ghClient.PostComment(ctx, job.PRNumber, noChangesMsg, job.WorkflowName)
@@ -357,6 +367,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 			baseManifests, err = argoClient.GetMultiSourceManifests(ctx, appName, baseRevisions)
 			if err != nil {
 				jobLog.Warn("Failed to get base manifests for multi-source app", "app", appName, "error", err)
+				metrics.RecordApplicationProcessed(job.Repository, appName, "error")
 				diffResults = append(diffResults, &diff.DiffResult{
 					AppInfo:      appInfo,
 					ErrorMessage: fmt.Sprintf("Failed to get base manifests: %v", err),
@@ -367,6 +378,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 			headManifests, err = argoClient.GetMultiSourceManifests(ctx, appName, headRevisions)
 			if err != nil {
 				jobLog.Warn("Failed to get head manifests for multi-source app", "app", appName, "error", err)
+				metrics.RecordApplicationProcessed(job.Repository, appName, "error")
 				diffResults = append(diffResults, &diff.DiffResult{
 					AppInfo:      appInfo,
 					ErrorMessage: fmt.Sprintf("Failed to get head manifests: %v", err),
@@ -378,6 +390,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 			baseManifests, err = argoClient.GetManifests(ctx, appName, job.BaseRef)
 			if err != nil {
 				jobLog.Warn("Failed to get base manifests", "app", appName, "error", err)
+				metrics.RecordApplicationProcessed(job.Repository, appName, "error")
 				diffResults = append(diffResults, &diff.DiffResult{
 					AppInfo:      appInfo,
 					ErrorMessage: fmt.Sprintf("Failed to get base manifests: %v", err),
@@ -388,6 +401,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 			headManifests, err = argoClient.GetManifests(ctx, appName, job.HeadRef)
 			if err != nil {
 				jobLog.Warn("Failed to get head manifests", "app", appName, "error", err)
+				metrics.RecordApplicationProcessed(job.Repository, appName, "error")
 				diffResults = append(diffResults, &diff.DiffResult{
 					AppInfo:      appInfo,
 					ErrorMessage: fmt.Sprintf("Failed to get head manifests: %v", err),
@@ -400,11 +414,33 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 		result, err := diff.GenerateDiff(baseManifests, headManifests, appInfo)
 		if err != nil {
 			jobLog.Warn("Failed to generate diff", "app", appName, "error", err)
+			metrics.RecordApplicationProcessed(job.Repository, appName, "error")
 			diffResults = append(diffResults, &diff.DiffResult{
 				AppInfo:      appInfo,
 				ErrorMessage: fmt.Sprintf("Failed to generate diff: %v", err),
 			})
 			continue
+		}
+
+		// Record successful processing and diff result
+		metrics.RecordApplicationProcessed(job.Repository, appName, "success")
+		metrics.RecordApplicationDiff(job.Repository, appName, result.HasChanges)
+
+		// Record resource change counts
+		if result.ResourcesAdded > 0 {
+			for i := 0; i < result.ResourcesAdded; i++ {
+				metrics.RecordResourceChange(job.Repository, appName, "added")
+			}
+		}
+		if result.ResourcesModified > 0 {
+			for i := 0; i < result.ResourcesModified; i++ {
+				metrics.RecordResourceChange(job.Repository, appName, "modified")
+			}
+		}
+		if result.ResourcesDeleted > 0 {
+			for i := 0; i < result.ResourcesDeleted; i++ {
+				metrics.RecordResourceChange(job.Repository, appName, "deleted")
+			}
 		}
 
 		diffResults = append(diffResults, result)
