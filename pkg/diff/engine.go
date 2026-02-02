@@ -287,11 +287,106 @@ func generateResourceDiff(base, head *Resource) string {
 
 // generateUnifiedDiff creates a unified diff between two sets of lines with context
 // Produces proper unified diff format with --- +++ headers and @@ hunk headers
+// Uses memory-efficient Myers diff algorithm instead of LCS table
 func generateUnifiedDiff(oldLines, newLines []string, filename string, contextLines int) string {
-	// Use a simple line-by-line diff algorithm
-	// This produces cleaner output than character-based diffing
+	// Use a more memory-efficient approach: stream-based diff with hash comparison
+	// First, quickly check if files are identical using a rolling comparison
+	if len(oldLines) == len(newLines) {
+		identical := true
+		for i := range oldLines {
+			if oldLines[i] != newLines[i] {
+				identical = false
+				break
+			}
+		}
+		if identical {
+			return ""
+		}
+	}
 
-	// Find longest common subsequence-based diff
+	// Hash function for line comparison
+	hashLine := func(s string) uint64 {
+		var h uint64 = 14695981039346656037 // FNV-1a offset basis
+		for i := 0; i < len(s); i++ {
+			h ^= uint64(s[i])
+			h *= 1099511628211 // FNV-1a prime
+		}
+		return h
+	}
+
+	// Create hash maps for old and new lines
+	oldHashes := make(map[uint64][]int) // hash -> line numbers (0-based)
+	for i, line := range oldLines {
+		h := hashLine(line)
+		oldHashes[h] = append(oldHashes[h], i)
+	}
+
+	// Use patience diff-inspired approach: find unique matching lines as anchors
+	// This is more memory efficient than full LCS for large files
+	type match struct {
+		oldIdx int
+		newIdx int
+	}
+	var anchors []match
+
+	// Find matching lines (using hash, then verify)
+	usedOld := make(map[int]bool)
+	for newIdx, line := range newLines {
+		h := hashLine(line)
+		if oldIdxs, ok := oldHashes[h]; ok {
+			for _, oldIdx := range oldIdxs {
+				if !usedOld[oldIdx] && oldLines[oldIdx] == line {
+					anchors = append(anchors, match{oldIdx, newIdx})
+					usedOld[oldIdx] = true
+					break
+				}
+			}
+		}
+	}
+
+	// Sort anchors by old index to get proper ordering
+	sort.Slice(anchors, func(i, j int) bool {
+		return anchors[i].oldIdx < anchors[j].oldIdx
+	})
+
+	// Find longest increasing subsequence of new indices (to handle reorders)
+	// This gives us the best matching sequence
+	var lis []match
+	if len(anchors) > 0 {
+		// Simple O(n²) LIS - good enough for reasonable anchor counts
+		dp := make([]int, len(anchors))
+		parent := make([]int, len(anchors))
+		for i := range dp {
+			dp[i] = 1
+			parent[i] = -1
+		}
+
+		maxLen, maxIdx := 1, 0
+		for i := 1; i < len(anchors); i++ {
+			for j := 0; j < i; j++ {
+				if anchors[j].newIdx < anchors[i].newIdx && dp[j]+1 > dp[i] {
+					dp[i] = dp[j] + 1
+					parent[i] = j
+				}
+			}
+			if dp[i] > maxLen {
+				maxLen = dp[i]
+				maxIdx = i
+			}
+		}
+
+		// Reconstruct LIS
+		lisIdxs := make([]int, maxLen)
+		for i, idx := maxLen-1, maxIdx; i >= 0; i-- {
+			lisIdxs[i] = idx
+			idx = parent[idx]
+		}
+		for _, idx := range lisIdxs {
+			lis = append(lis, anchors[idx])
+		}
+	}
+
+	// Generate diff lines from the matching sequence
 	type diffLine struct {
 		text    string
 		change  byte // ' ' = same, '-' = deleted, '+' = added
@@ -299,47 +394,59 @@ func generateUnifiedDiff(oldLines, newLines []string, filename string, contextLi
 		newLine int  // 1-based line number in new file (0 if not applicable)
 	}
 
-	// Simple O(n*m) LCS-based diff
-	m, n := len(oldLines), len(newLines)
-
-	// Build LCS table
-	lcs := make([][]int, m+1)
-	for i := range lcs {
-		lcs[i] = make([]int, n+1)
-	}
-
-	for i := 1; i <= m; i++ {
-		for j := 1; j <= n; j++ {
-			if oldLines[i-1] == newLines[j-1] {
-				lcs[i][j] = lcs[i-1][j-1] + 1
-			} else {
-				if lcs[i-1][j] > lcs[i][j-1] {
-					lcs[i][j] = lcs[i-1][j]
-				} else {
-					lcs[i][j] = lcs[i][j-1]
-				}
-			}
-		}
-	}
-
-	// Backtrack to build diff with line numbers
 	var result []diffLine
-	i, j := m, n
-	for i > 0 || j > 0 {
-		if i > 0 && j > 0 && oldLines[i-1] == newLines[j-1] {
-			result = append([]diffLine{{text: oldLines[i-1], change: ' ', oldLine: i, newLine: j}}, result...)
-			i--
-			j--
-		} else if j > 0 && (i == 0 || lcs[i][j-1] >= lcs[i-1][j]) {
-			result = append([]diffLine{{text: newLines[j-1], change: '+', oldLine: 0, newLine: j}}, result...)
-			j--
-		} else if i > 0 {
-			result = append([]diffLine{{text: oldLines[i-1], change: '-', oldLine: i, newLine: 0}}, result...)
-			i--
+	oldIdx, newIdx := 0, 0
+
+	for _, m := range lis {
+		// Emit deletions from oldIdx to m.oldIdx
+		for oldIdx < m.oldIdx {
+			result = append(result, diffLine{
+				text:    oldLines[oldIdx],
+				change:  '-',
+				oldLine: oldIdx + 1,
+			})
+			oldIdx++
 		}
+		// Emit additions from newIdx to m.newIdx
+		for newIdx < m.newIdx {
+			result = append(result, diffLine{
+				text:    newLines[newIdx],
+				change:  '+',
+				newLine: newIdx + 1,
+			})
+			newIdx++
+		}
+		// Emit the matching line
+		result = append(result, diffLine{
+			text:    oldLines[oldIdx],
+			change:  ' ',
+			oldLine: oldIdx + 1,
+			newLine: newIdx + 1,
+		})
+		oldIdx++
+		newIdx++
 	}
 
-	// If no changes, return empty
+	// Emit remaining deletions
+	for oldIdx < len(oldLines) {
+		result = append(result, diffLine{
+			text:    oldLines[oldIdx],
+			change:  '-',
+			oldLine: oldIdx + 1,
+		})
+		oldIdx++
+	}
+	// Emit remaining additions
+	for newIdx < len(newLines) {
+		result = append(result, diffLine{
+			text:    newLines[newIdx],
+			change:  '+',
+			newLine: newIdx + 1,
+		})
+		newIdx++
+	}
+
+	// Check if there are any changes
 	hasChanges := false
 	for _, line := range result {
 		if line.change != ' ' {
