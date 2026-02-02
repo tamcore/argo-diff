@@ -9,6 +9,11 @@ permissions:
   contents: write
   packages: write
 
+env:
+  REPOSITORY: ghcr.io/${{ github.repository }}
+  CHART_DIR: charts/argo-diff
+  CHART_REPOSITORY: ghcr.io/${{ github.repository_owner }}/charts
+
 jobs:
   release:
     name: Release
@@ -43,7 +48,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          KO_DOCKER_REPO: ghcr.io/tamcore/argo-diff
+          KO_DOCKER_REPO: ${{ env.REPOSITORY }}
 
   helm-release:
     name: Helm Chart Release
@@ -55,23 +60,44 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Configure Git
-        run: |
-          git config user.name "$GITHUB_ACTOR"
-          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
-
       - name: Set up Helm
         uses: azure/setup-helm@v4
 
-      - name: Package Helm chart
+      - name: Login to registry
         run: |
-          # Update chart version to match release tag
-          VERSION=${GITHUB_REF_NAME#v}
-          sed -i "s/^version:.*/version: $VERSION/" charts/argo-diff/Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" charts/argo-diff/Chart.yaml
-          helm package charts/argo-diff
+          echo '${{ secrets.GITHUB_TOKEN }}' | \
+            helm registry login \
+              -u '${{ github.actor }}' \
+              --password-stdin \
+              ghcr.io
 
-      - name: Upload Helm chart as release asset
-        uses: softprops/action-gh-release@v2
+      - name: Update Chart version
+        env:
+          VERSION: "${{ github.ref_name }}"
+        run: |
+          yq -i '.version = strenv(VERSION)' '${{ env.CHART_DIR }}/Chart.yaml'
+          yq -i '.appVersion = strenv(VERSION)' '${{ env.CHART_DIR }}/Chart.yaml'
+
+      - name: Package chart
+        run: |
+          echo PACKAGE=$(helm package ${{ env.CHART_DIR }} -u | cut -d " " -f 8) >> ${GITHUB_ENV}
+
+      - name: Push chart to OCI registry
+        run: |
+          helm push \
+            ${{ env.PACKAGE }} \
+            oci://${{ env.CHART_REPOSITORY }}
+
+      - name: Template chart for install.yaml
+        run: |
+          helm template \
+            ${GITHUB_REPOSITORY#*/} \
+            ${{ env.CHART_DIR }} > install.yaml
+
+      - name: Upload artifacts to release
+        uses: svenstaro/upload-release-action@v2
         with:
-          files: argo-diff-*.tgz
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: "{install.yaml,${{ env.PACKAGE }}}"
+          file_glob: true
+          tag: ${{ github.ref }}
