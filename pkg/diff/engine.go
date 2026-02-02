@@ -227,19 +227,24 @@ func parseManifests(manifests []string) ([]*Resource, error) {
 	return resources, nil
 }
 
-// jsonToYAML converts a JSON string to YAML format
+// jsonToYAML converts a JSON string to YAML format with reasonable line width
 func jsonToYAML(jsonStr string) (string, error) {
 	var data interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return "", err
 	}
 
-	yamlBytes, err := yaml.Marshal(data)
-	if err != nil {
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(data); err != nil {
+		return "", err
+	}
+	if err := encoder.Close(); err != nil {
 		return "", err
 	}
 
-	return string(yamlBytes), nil
+	return buf.String(), nil
 }
 
 // filterHelmHooks removes resources with helm hook annotations
