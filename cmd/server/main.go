@@ -287,37 +287,6 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 		"pr_number", job.PRNumber,
 	)
 
-	// Debug: Log token lengths and prefix (first 4 chars)
-	tokenPrefix := job.GitHubToken
-	if len(tokenPrefix) > 4 {
-		tokenPrefix = tokenPrefix[:4]
-	}
-	logging.Info("Processing job with tokens",
-		"repository", job.Repository,
-		"pr_number", job.PRNumber,
-		"github_token_length", len(job.GitHubToken),
-		"github_token_prefix", tokenPrefix,
-		"argocd_token_length", len(job.ArgocdToken),
-	)
-
-	// Debug: Test GitHub API directly with raw HTTP
-	testURL := fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments?per_page=1",
-		job.Repository, job.PRNumber)
-	req, _ := http.NewRequestWithContext(ctx, "GET", testURL, nil)
-	req.Header.Set("Authorization", "token "+job.GitHubToken)
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "argo-diff")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		logging.Error("Debug HTTP test failed", "error", err)
-	} else {
-		logging.Info("Debug HTTP test result",
-			"status_code", resp.StatusCode,
-			"url", testURL,
-		)
-		resp.Body.Close()
-	}
-
 	// Parse repository (owner/repo format)
 	parts := strings.Split(job.Repository, "/")
 	if len(parts) != 2 {
