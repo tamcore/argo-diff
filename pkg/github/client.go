@@ -232,21 +232,26 @@ func splitComment(body, workflowName string) []string {
 		return []string{body}
 	}
 
-	// Try to split at application boundaries (### headers or --- separators)
-	appPattern := regexp.MustCompile(`(?m)^(---|### )`)
-	sections := appPattern.Split(body, -1)
-	matches := appPattern.FindAllString(body, -1)
+	// Try to split at </details> boundaries (end of each resource diff)
+	// This is safer than splitting on --- which appears in diff headers
+	detailsPattern := regexp.MustCompile(`(?m)</details>\n*`)
+	sections := detailsPattern.Split(body, -1)
 
 	var parts []string
 	var currentPart strings.Builder
 
 	for i, section := range sections {
-		// Reconstruct with the delimiter
+		// Add back the </details> tag except for the last section
 		var fullSection string
-		if i > 0 && i-1 < len(matches) {
-			fullSection = matches[i-1] + section
+		if i < len(sections)-1 {
+			fullSection = section + "</details>\n\n"
 		} else {
 			fullSection = section
+		}
+
+		// Skip empty sections
+		if strings.TrimSpace(fullSection) == "" {
+			continue
 		}
 
 		// Check if adding this section would exceed the limit
