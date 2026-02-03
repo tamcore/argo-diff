@@ -227,8 +227,10 @@ func (c *Client) DeleteOldComments(ctx context.Context, prNumber int, workflowNa
 
 // splitComment splits a large comment into multiple parts at application boundaries
 func splitComment(body, workflowName string) []string {
+	effectiveMax := maxCommentSize - 500 // Leave room for header
+
 	// If it fits in one comment, return as-is
-	if len(body) <= maxCommentSize-500 { // Leave room for header
+	if len(body) <= effectiveMax {
 		return []string{body}
 	}
 
@@ -254,8 +256,21 @@ func splitComment(body, workflowName string) []string {
 			continue
 		}
 
+		// If this single section is too large, chunk it separately
+		if len(fullSection) > effectiveMax {
+			// First, save any accumulated content
+			if currentPart.Len() > 0 {
+				parts = append(parts, currentPart.String())
+				currentPart.Reset()
+			}
+			// Chunk the oversized section
+			chunks := chunkString(fullSection, effectiveMax)
+			parts = append(parts, chunks...)
+			continue
+		}
+
 		// Check if adding this section would exceed the limit
-		if currentPart.Len()+len(fullSection) > maxCommentSize-500 && currentPart.Len() > 0 {
+		if currentPart.Len()+len(fullSection) > effectiveMax && currentPart.Len() > 0 {
 			parts = append(parts, currentPart.String())
 			currentPart.Reset()
 		}
@@ -270,7 +285,7 @@ func splitComment(body, workflowName string) []string {
 
 	// If we couldn't split nicely, just chunk it
 	if len(parts) == 0 {
-		parts = chunkString(body, maxCommentSize-500)
+		parts = chunkString(body, effectiveMax)
 	}
 
 	return parts

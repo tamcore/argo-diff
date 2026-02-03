@@ -62,6 +62,47 @@ func TestSplitComment(t *testing.T) {
 	}
 }
 
+func TestSplitCommentLargeSingleSection(t *testing.T) {
+	// Test that a single oversized section gets chunked properly
+	// Create a section larger than maxCommentSize
+	largeSection := "<details>\n" + strings.Repeat("x", 70000) + "\n</details>"
+	parts := splitComment(largeSection, "workflow")
+
+	// Should be split into multiple parts
+	if len(parts) < 2 {
+		t.Errorf("splitComment() returned %d parts for oversized section, want >= 2", len(parts))
+	}
+
+	// Each part should be under the limit
+	effectiveMax := maxCommentSize - 500
+	for i, part := range parts {
+		if len(part) > effectiveMax {
+			t.Errorf("splitComment() part %d has length %d, exceeds limit %d", i, len(part), effectiveMax)
+		}
+	}
+}
+
+func TestSplitCommentMultipleSections(t *testing.T) {
+	// Test splitting at </details> boundaries
+	section := strings.Repeat("y", 30000)
+	body := "<details>" + section + "</details>\n\n<details>" + section + "</details>\n\n<details>" + section + "</details>"
+
+	parts := splitComment(body, "workflow")
+
+	// Should be split into multiple parts (3 sections of ~30k each = ~90k total)
+	if len(parts) < 2 {
+		t.Errorf("splitComment() returned %d parts, want >= 2", len(parts))
+	}
+
+	// Each part should be under the limit
+	effectiveMax := maxCommentSize - 500
+	for i, part := range parts {
+		if len(part) > effectiveMax {
+			t.Errorf("splitComment() part %d has length %d, exceeds limit %d", i, len(part), effectiveMax)
+		}
+	}
+}
+
 func TestChunkString(t *testing.T) {
 	input := strings.Repeat("a", 100)
 	chunks := chunkString(input, 30)
