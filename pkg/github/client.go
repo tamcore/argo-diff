@@ -74,7 +74,8 @@ func isWorkflowComment(body, workflowName string) bool {
 
 // PostComment posts or updates comments on a pull request
 // Handles multi-part comments if the content exceeds GitHub's limit
-func (c *Client) PostComment(ctx context.Context, prNumber int, body, workflowName string) error {
+// If collapseThreshold > 0 and the number of parts exceeds it, all <details open> tags are collapsed
+func (c *Client) PostComment(ctx context.Context, prNumber int, body, workflowName string, collapseThreshold int) error {
 	// Delete old comments first
 	if err := c.DeleteOldComments(ctx, prNumber, workflowName); err != nil {
 		return fmt.Errorf("delete old comments: %w", err)
@@ -82,6 +83,17 @@ func (c *Client) PostComment(ctx context.Context, prNumber int, body, workflowNa
 
 	// Split into parts if needed
 	parts := splitComment(body, workflowName)
+
+	// If we exceed the collapse threshold, collapse all <details open> to <details>
+	if collapseThreshold > 0 && len(parts) > collapseThreshold {
+		slog.Info("Collapsing all details tags due to threshold exceeded",
+			"parts", len(parts),
+			"threshold", collapseThreshold,
+		)
+		for i := range parts {
+			parts[i] = strings.ReplaceAll(parts[i], "<details open>", "<details>")
+		}
+	}
 
 	for i, part := range parts {
 		var partBody string
@@ -256,16 +268,16 @@ func splitComment(body, workflowName string) []string {
 			continue
 		}
 
-		// If this single section is too large, chunk it separately
+		// If this single section is too large, truncate it
 		if len(fullSection) > effectiveMax {
 			// First, save any accumulated content
 			if currentPart.Len() > 0 {
 				parts = append(parts, currentPart.String())
 				currentPart.Reset()
 			}
-			// Chunk the oversized section
-			chunks := chunkString(fullSection, effectiveMax)
-			parts = append(parts, chunks...)
+			// Truncate the oversized section
+			truncated := truncateSection(fullSection, effectiveMax)
+			parts = append(parts, truncated)
 			continue
 		}
 
@@ -283,34 +295,54 @@ func splitComment(body, workflowName string) []string {
 		parts = append(parts, currentPart.String())
 	}
 
-	// If we couldn't split nicely, just chunk it
+	// If we couldn't split nicely, just truncate
 	if len(parts) == 0 {
-		parts = chunkString(body, effectiveMax)
+		parts = []string{truncateSection(body, effectiveMax)}
 	}
 
 	return parts
 }
 
-// chunkString splits a string into chunks of max size
-func chunkString(s string, chunkSize int) []string {
-	var chunks []string
-	for len(s) > 0 {
-		if len(s) <= chunkSize {
-			chunks = append(chunks, s)
+// truncateSection truncates an oversized section while preserving markdown structure
+func truncateSection(s string, maxSize int) string {
+	if len(s) <= maxSize {
+		return s
+	}
+
+	// Reserve space for truncation message and closing tags
+	truncationMsg := "\n\n... (diff truncated - too large to display)\n```\n</details>\n"
+	targetSize := maxSize - len(truncationMsg) - 100
+
+	// Find a good break point (newline)
+	breakPoint := targetSize
+	for i := targetSize; i > targetSize-500 && i > 0; i-- {
+		if s[i] == '\n' {
+			breakPoint = i
 			break
 		}
-		// Try to break at a newline
-		breakPoint := chunkSize
-		for i := chunkSize; i > chunkSize-100 && i > 0; i-- {
-			if s[i] == '\n' {
-				breakPoint = i + 1
-				break
-			}
-		}
-		chunks = append(chunks, s[:breakPoint])
-		s = s[breakPoint:]
 	}
-	return chunks
+
+	truncated := s[:breakPoint]
+
+	// Check if we're inside a code block (odd number of ```)
+	codeBlocks := strings.Count(truncated, "```")
+	inCodeBlock := codeBlocks%2 == 1
+
+	// Check if we're inside a details block
+	detailsOpens := strings.Count(truncated, "<details")
+	detailsCloses := strings.Count(truncated, "</details>")
+	inDetails := detailsOpens > detailsCloses
+
+	// Add appropriate closing tags
+	suffix := "\n\n... (diff truncated - too large to display)\n"
+	if inCodeBlock {
+		suffix += "```\n"
+	}
+	if inDetails {
+		suffix += "</details>\n"
+	}
+
+	return truncated + suffix
 }
 
 // GetPullRequest retrieves pull request details

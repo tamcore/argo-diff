@@ -20,4 +20,5 @@ type Job struct {
 	// Options
 	DedupeDiffs          bool // Default: true - deduplicate identical diffs across apps
 	IgnoreArgocdTracking bool // Default: false - ignore argocd.argoproj.io/* labels/annotations in diffs
+	CollapseThreshold    int  // Default: 3 - collapse all diffs if comment parts exceed this threshold (0 = disabled)
 }

@@ -37,6 +37,7 @@ type WebhookPayload struct {
 	DedupeDiffs          *bool    `json:"dedupe_diffs,omitempty"`           // Default: true - deduplicate identical diffs across apps
 	ArgocdURL            string   `json:"argocd_url,omitempty"`             // Optional: ArgoCD UI URL for "View in ArgoCD" links
 	IgnoreArgocdTracking *bool    `json:"ignore_argocd_tracking,omitempty"` // Default: false - ignore argocd.argoproj.io/* labels/annotations in diffs
+	CollapseThreshold    *int     `json:"collapse_threshold,omitempty"`     // Default: 3 - collapse all diffs if comment parts exceed this threshold (0 = disabled)
 }
 
 type Server struct {
@@ -211,6 +212,12 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		ignoreArgocdTracking = *payload.IgnoreArgocdTracking
 	}
 
+	// Default collapse_threshold to 3 if not specified
+	collapseThreshold := 3
+	if payload.CollapseThreshold != nil {
+		collapseThreshold = *payload.CollapseThreshold
+	}
+
 	job := worker.Job{
 		Repository:           payload.Repository,
 		PRNumber:             payload.PRNumber,
@@ -225,6 +232,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		ArgocdURL:            payload.ArgocdURL,
 		DedupeDiffs:          dedupeDiffs,
 		IgnoreArgocdTracking: ignoreArgocdTracking,
+		CollapseThreshold:    collapseThreshold,
 	}
 
 	// Check if sync processing is requested
@@ -325,7 +333,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 	// Helper to post errors
 	postError := func(msg string) {
 		errorMsg := fmt.Sprintf("## ❌ Error\n\n%s", msg)
-		_ = ghClient.PostComment(ctx, job.PRNumber, errorMsg, job.WorkflowName)
+		_ = ghClient.PostComment(ctx, job.PRNumber, errorMsg, job.WorkflowName, 0)
 	}
 
 	// Create ArgoCD client
@@ -351,7 +359,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 
 	if len(affectedApps) == 0 {
 		noChangesMsg := fmt.Sprintf("## ✅ No ArgoCD Applications Affected\n\nNo applications found matching repository `%s` and changed files.", job.Repository)
-		return ghClient.PostComment(ctx, job.PRNumber, noChangesMsg, job.WorkflowName)
+		return ghClient.PostComment(ctx, job.PRNumber, noChangesMsg, job.WorkflowName, 0)
 	}
 
 	jobLog.Info("Found affected applications", "count", len(affectedApps))
@@ -472,7 +480,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 	finalComment := diff.FormatReport(report)
 
 	// Post comment to GitHub
-	return ghClient.PostComment(ctx, job.PRNumber, finalComment, job.WorkflowName)
+	return ghClient.PostComment(ctx, job.PRNumber, finalComment, job.WorkflowName, job.CollapseThreshold)
 }
 
 // Validation constants
