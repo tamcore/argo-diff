@@ -28,4 +28,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Local agent notes
+AGENTS.local.md
 /bin/
