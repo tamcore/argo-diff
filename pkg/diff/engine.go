@@ -2,12 +2,15 @@ package diff
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/tamcore/argo-diff/pkg/logging"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,6 +25,7 @@ type Resource struct {
 	Metadata   struct {
 		Name        string            `yaml:"name"`
 		Namespace   string            `yaml:"namespace,omitempty"`
+		Labels      map[string]string `yaml:"labels,omitempty"`
 		Annotations map[string]string `yaml:"annotations,omitempty"`
 	} `yaml:"metadata"`
 	raw string
@@ -30,6 +34,15 @@ type Resource struct {
 // GenerateDiff generates a formatted diff between base and head manifests
 // Returns a DiffResult with structured information about the diff
 func GenerateDiff(baseManifests, headManifests []string, appInfo *AppInfo) (*DiffResult, error) {
+	return GenerateDiffWithOptions(baseManifests, headManifests, appInfo, nil)
+}
+
+// GenerateDiffWithOptions generates a formatted diff with configurable options
+func GenerateDiffWithOptions(baseManifests, headManifests []string, appInfo *AppInfo, opts *DiffOptions) (*DiffResult, error) {
+	if opts == nil {
+		opts = &DiffOptions{}
+	}
+
 	result := &DiffResult{
 		AppInfo:    appInfo,
 		Diffs:      []string{},
@@ -49,6 +62,12 @@ func GenerateDiff(baseManifests, headManifests []string, appInfo *AppInfo) (*Dif
 	// Filter out helm hooks
 	baseResources = filterHelmHooks(baseResources)
 	headResources = filterHelmHooks(headResources)
+
+	// Filter out ArgoCD tracking labels/annotations if requested
+	if opts.IgnoreArgocdTracking {
+		baseResources = filterArgocdTracking(baseResources)
+		headResources = filterArgocdTracking(headResources)
+	}
 
 	// Create resource maps for comparison
 	baseMap := make(map[string]*Resource)
@@ -130,6 +149,12 @@ func FormatAppDiff(result *DiffResult) string {
 		sb.WriteString(fmt.Sprintf("[View in ArgoCD](%s)\n\n", url))
 	}
 
+	// Check if this is a deduplicated diff
+	if result.DuplicateOf != "" {
+		sb.WriteString(fmt.Sprintf("_Same diff as `%s`_\n", result.DuplicateOf))
+		return sb.String()
+	}
+
 	// Diffs
 	sb.WriteString(strings.Join(result.Diffs, "\n\n"))
 
@@ -166,13 +191,63 @@ func FormatReport(report *DiffReport) string {
 	return sb.String()
 }
 
+// computeDiffHash computes a SHA256 hash of the diffs for deduplication
+// The diffs are sorted before hashing to ensure consistent ordering
+func computeDiffHash(diffs []string) string {
+	// Sort diffs to ensure consistent ordering across applications
+	sorted := make([]string, len(diffs))
+	copy(sorted, diffs)
+	sort.Strings(sorted)
+
+	h := sha256.New()
+	for _, d := range sorted {
+		h.Write([]byte(d))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// deduplicateResults marks duplicate diffs across applications
+// Results are processed in order, so the first app with a particular diff is kept as the original
+func deduplicateResults(results []*DiffResult) {
+	// Map from diff hash to the first app name that had this diff
+	diffHashToApp := make(map[string]string)
+
+	for _, r := range results {
+		// Only deduplicate results that have changes and no errors
+		if !r.HasChanges || r.ErrorMessage != "" {
+			continue
+		}
+
+		hash := computeDiffHash(r.Diffs)
+		if originalApp, exists := diffHashToApp[hash]; exists {
+			// This is a duplicate - mark it
+			r.DuplicateOf = originalApp
+			logging.Debug("Found duplicate diff", "app", r.AppInfo.Name, "duplicate_of", originalApp)
+		} else {
+			// First occurrence of this diff
+			diffHashToApp[hash] = r.AppInfo.Name
+		}
+	}
+}
+
 // NewDiffReport creates a new diff report with metadata
 func NewDiffReport(workflowName string, results []*DiffResult) *DiffReport {
+	return NewDiffReportWithOptions(workflowName, results, true)
+}
+
+// NewDiffReportWithOptions creates a new diff report with metadata and options
+func NewDiffReportWithOptions(workflowName string, results []*DiffResult, dedupeDiffs bool) *DiffReport {
 	report := &DiffReport{
 		WorkflowName: workflowName,
 		Timestamp:    time.Now().UTC().Format("3:04PM MST, 2 Jan 2006"),
 		TotalApps:    len(results),
 		Results:      results,
+		DedupeDiffs:  dedupeDiffs,
+	}
+
+	// Apply deduplication if enabled
+	if dedupeDiffs {
+		deduplicateResults(results)
 	}
 
 	for _, r := range results {
@@ -259,6 +334,98 @@ func filterHelmHooks(resources []*Resource) []*Resource {
 		}
 	}
 	return filtered
+}
+
+// argocdTrackingPrefix is the prefix for ArgoCD tracking labels and annotations
+const argocdTrackingPrefix = "argocd.argoproj.io/"
+
+// filterArgocdTracking removes ArgoCD tracking labels and annotations from resources
+// and regenerates the raw YAML without them
+func filterArgocdTracking(resources []*Resource) []*Resource {
+	filtered := make([]*Resource, 0, len(resources))
+	for _, r := range resources {
+		// Parse the raw YAML into a generic map to manipulate
+		var obj map[string]interface{}
+		if err := yaml.Unmarshal([]byte(r.raw), &obj); err != nil {
+			// If we can't parse, keep the original
+			filtered = append(filtered, r)
+			continue
+		}
+
+		// Remove ArgoCD tracking from metadata
+		if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+			// Filter labels
+			if labels, ok := metadata["labels"].(map[string]interface{}); ok {
+				filteredLabels := make(map[string]interface{})
+				for k, v := range labels {
+					if !strings.HasPrefix(k, argocdTrackingPrefix) {
+						filteredLabels[k] = v
+					}
+				}
+				if len(filteredLabels) > 0 {
+					metadata["labels"] = filteredLabels
+				} else {
+					delete(metadata, "labels")
+				}
+			}
+
+			// Filter annotations
+			if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
+				filteredAnnotations := make(map[string]interface{})
+				for k, v := range annotations {
+					if !strings.HasPrefix(k, argocdTrackingPrefix) {
+						filteredAnnotations[k] = v
+					}
+				}
+				if len(filteredAnnotations) > 0 {
+					metadata["annotations"] = filteredAnnotations
+				} else {
+					delete(metadata, "annotations")
+				}
+			}
+		}
+
+		// Re-encode to YAML
+		var buf bytes.Buffer
+		enc := yaml.NewEncoder(&buf)
+		enc.SetIndent(2)
+		if err := enc.Encode(obj); err != nil {
+			// If we can't encode, keep the original
+			filtered = append(filtered, r)
+			continue
+		}
+
+		// Create new resource with filtered raw content
+		newResource := &Resource{
+			APIVersion: r.APIVersion,
+			Kind:       r.Kind,
+			Metadata:   r.Metadata,
+			raw:        strings.TrimSpace(buf.String()),
+		}
+		// Also filter the in-memory metadata
+		newResource.Metadata.Labels = filterMapByPrefix(r.Metadata.Labels, argocdTrackingPrefix)
+		newResource.Metadata.Annotations = filterMapByPrefix(r.Metadata.Annotations, argocdTrackingPrefix)
+
+		filtered = append(filtered, newResource)
+	}
+	return filtered
+}
+
+// filterMapByPrefix removes entries with keys starting with the given prefix
+func filterMapByPrefix(m map[string]string, prefix string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	result := make(map[string]string)
+	for k, v := range m {
+		if !strings.HasPrefix(k, prefix) {
+			result[k] = v
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 // key returns a unique key for the resource
@@ -463,7 +630,9 @@ func generateUnifiedDiff(oldLines, newLines []string, filename string, contextLi
 
 	// Generate unified diff output with proper headers and hunks
 	var buf bytes.Buffer
-	timestamp := time.Now().UTC().Format("2006-01-02 15:04:05.000000000 -0700")
+	// Use a fixed timestamp to ensure consistent diffs across applications
+	// This allows proper deduplication of identical changes
+	timestamp := "+0000"
 
 	// Write file headers
 	buf.WriteString(fmt.Sprintf("--- %s\t%s\n", filename, timestamp))

@@ -15,4 +15,9 @@ type Job struct {
 	ArgocdServer    string
 	ArgocdToken     string
 	ArgocdPlainText bool
+	ArgocdURL       string // Optional: ArgoCD UI URL for links in comments
+
+	// Options
+	DedupeDiffs          bool // Default: true - deduplicate identical diffs across apps
+	IgnoreArgocdTracking bool // Default: false - ignore argocd.argoproj.io/* labels/annotations in diffs
 }

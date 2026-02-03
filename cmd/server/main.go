@@ -26,14 +26,17 @@ import (
 )
 
 type WebhookPayload struct {
-	GitHubToken  string   `json:"github_token"`
-	ArgocdToken  string   `json:"argocd_token"`
-	Repository   string   `json:"repository"`
-	PRNumber     int      `json:"pr_number"`
-	BaseRef      string   `json:"base_ref"`
-	HeadRef      string   `json:"head_ref"`
-	ChangedFiles []string `json:"changed_files"`
-	WorkflowName string   `json:"workflow_name"`
+	GitHubToken          string   `json:"github_token"`
+	ArgocdToken          string   `json:"argocd_token"`
+	Repository           string   `json:"repository"`
+	PRNumber             int      `json:"pr_number"`
+	BaseRef              string   `json:"base_ref"`
+	HeadRef              string   `json:"head_ref"`
+	ChangedFiles         []string `json:"changed_files"`
+	WorkflowName         string   `json:"workflow_name"`
+	DedupeDiffs          *bool    `json:"dedupe_diffs,omitempty"`           // Default: true - deduplicate identical diffs across apps
+	ArgocdURL            string   `json:"argocd_url,omitempty"`             // Optional: ArgoCD UI URL for "View in ArgoCD" links
+	IgnoreArgocdTracking *bool    `json:"ignore_argocd_tracking,omitempty"` // Default: false - ignore argocd.argoproj.io/* labels/annotations in diffs
 }
 
 type Server struct {
@@ -196,17 +199,32 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		payload.WorkflowName = "ArgoCD Diff"
 	}
 
+	// Default dedupe_diffs to true if not specified
+	dedupeDiffs := true
+	if payload.DedupeDiffs != nil {
+		dedupeDiffs = *payload.DedupeDiffs
+	}
+
+	// Default ignore_argocd_tracking to false if not specified
+	ignoreArgocdTracking := false
+	if payload.IgnoreArgocdTracking != nil {
+		ignoreArgocdTracking = *payload.IgnoreArgocdTracking
+	}
+
 	job := worker.Job{
-		Repository:      payload.Repository,
-		PRNumber:        payload.PRNumber,
-		BaseRef:         payload.BaseRef,
-		HeadRef:         payload.HeadRef,
-		ChangedFiles:    payload.ChangedFiles,
-		GitHubToken:     payload.GitHubToken,
-		WorkflowName:    payload.WorkflowName,
-		ArgocdServer:    s.cfg.ArgocdServer,
-		ArgocdToken:     payload.ArgocdToken,
-		ArgocdPlainText: s.cfg.ArgocdPlainText,
+		Repository:           payload.Repository,
+		PRNumber:             payload.PRNumber,
+		BaseRef:              payload.BaseRef,
+		HeadRef:              payload.HeadRef,
+		ChangedFiles:         payload.ChangedFiles,
+		GitHubToken:          payload.GitHubToken,
+		WorkflowName:         payload.WorkflowName,
+		ArgocdServer:         s.cfg.ArgocdServer,
+		ArgocdToken:          payload.ArgocdToken,
+		ArgocdPlainText:      s.cfg.ArgocdPlainText,
+		ArgocdURL:            payload.ArgocdURL,
+		DedupeDiffs:          dedupeDiffs,
+		IgnoreArgocdTracking: ignoreArgocdTracking,
 	}
 
 	// Check if sync processing is requested
@@ -342,7 +360,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 	var diffResults []*diff.DiffResult
 	for _, app := range affectedApps {
 		appName := app.Name
-		appInfo := diff.NewAppInfo(app, argoClient.Server())
+		appInfo := diff.NewAppInfo(app, job.ArgocdURL) // ArgocdURL is optional, link only shown if provided
 
 		// Get manifests - handle multi-source apps
 		var baseManifests, headManifests []string
@@ -410,8 +428,11 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 			}
 		}
 
-		// Generate diff
-		result, err := diff.GenerateDiff(baseManifests, headManifests, appInfo)
+		// Generate diff with options
+		diffOpts := &diff.DiffOptions{
+			IgnoreArgocdTracking: job.IgnoreArgocdTracking,
+		}
+		result, err := diff.GenerateDiffWithOptions(baseManifests, headManifests, appInfo, diffOpts)
 		if err != nil {
 			jobLog.Warn("Failed to generate diff", "app", appName, "error", err)
 			metrics.RecordApplicationProcessed(job.Repository, appName, "error")
@@ -446,8 +467,8 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 		diffResults = append(diffResults, result)
 	}
 
-	// Create and format the report
-	report := diff.NewDiffReport(job.WorkflowName, diffResults)
+	// Create and format the report (with deduplication based on job settings)
+	report := diff.NewDiffReportWithOptions(job.WorkflowName, diffResults, job.DedupeDiffs)
 	finalComment := diff.FormatReport(report)
 
 	// Post comment to GitHub

@@ -88,6 +88,13 @@ type DiffResult struct {
 	ResourcesAdded    int
 	ResourcesModified int
 	ResourcesDeleted  int
+	// Deduplication info (set during report generation)
+	DuplicateOf string // Name of the app this is a duplicate of (empty if not a duplicate)
+}
+
+// DiffOptions contains options for diff generation
+type DiffOptions struct {
+	IgnoreArgocdTracking bool // Remove argocd.argoproj.io/* labels/annotations before comparing
 }
 
 // DiffReport contains the complete diff report for all applications
@@ -97,4 +104,5 @@ type DiffReport struct {
 	TotalApps     int
 	AppsWithDiffs int
 	Results       []*DiffResult
+	DedupeDiffs   bool // Whether to deduplicate identical diffs
 }

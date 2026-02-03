@@ -89,6 +89,7 @@ func TestFilterHelmHooks(t *testing.T) {
 			Metadata: struct {
 				Name        string            `yaml:"name"`
 				Namespace   string            `yaml:"namespace,omitempty"`
+				Labels      map[string]string `yaml:"labels,omitempty"`
 				Annotations map[string]string `yaml:"annotations,omitempty"`
 			}{
 				Name: "pre-install",
@@ -103,6 +104,7 @@ func TestFilterHelmHooks(t *testing.T) {
 			Metadata: struct {
 				Name        string            `yaml:"name"`
 				Namespace   string            `yaml:"namespace,omitempty"`
+				Labels      map[string]string `yaml:"labels,omitempty"`
 				Annotations map[string]string `yaml:"annotations,omitempty"`
 			}{
 				Name: "app-service",
@@ -133,6 +135,7 @@ func TestResourceKey(t *testing.T) {
 				Metadata: struct {
 					Name        string            `yaml:"name"`
 					Namespace   string            `yaml:"namespace,omitempty"`
+					Labels      map[string]string `yaml:"labels,omitempty"`
 					Annotations map[string]string `yaml:"annotations,omitempty"`
 				}{
 					Name:      "test-app",
@@ -149,6 +152,7 @@ func TestResourceKey(t *testing.T) {
 				Metadata: struct {
 					Name        string            `yaml:"name"`
 					Namespace   string            `yaml:"namespace,omitempty"`
+					Labels      map[string]string `yaml:"labels,omitempty"`
 					Annotations map[string]string `yaml:"annotations,omitempty"`
 				}{
 					Name: "test-config",
@@ -246,5 +250,175 @@ func TestFormatReport(t *testing.T) {
 	}
 	if !strings.Contains(formatted, "1** of **2") {
 		t.Error("formatted report should contain summary")
+	}
+}
+
+func TestDeduplicateResults(t *testing.T) {
+	// Create results with identical diffs for app1 and app2
+	results := []*DiffResult{
+		{
+			AppInfo:    &AppInfo{Name: "app1", Status: "Synced", Health: "Healthy"},
+			HasChanges: true,
+			Diffs:      []string{"identical diff content"},
+		},
+		{
+			AppInfo:    &AppInfo{Name: "app2", Status: "OutOfSync", Health: "Progressing"},
+			HasChanges: true,
+			Diffs:      []string{"identical diff content"},
+		},
+		{
+			AppInfo:    &AppInfo{Name: "app3", Status: "Synced", Health: "Healthy"},
+			HasChanges: true,
+			Diffs:      []string{"different diff content"},
+		},
+	}
+
+	deduplicateResults(results)
+
+	// app1 should be the original (no DuplicateOf)
+	if results[0].DuplicateOf != "" {
+		t.Errorf("app1 should not be marked as duplicate, got DuplicateOf=%q", results[0].DuplicateOf)
+	}
+
+	// app2 should be marked as duplicate of app1
+	if results[1].DuplicateOf != "app1" {
+		t.Errorf("app2 should be marked as duplicate of app1, got DuplicateOf=%q", results[1].DuplicateOf)
+	}
+
+	// app3 has different content, should not be duplicate
+	if results[2].DuplicateOf != "" {
+		t.Errorf("app3 should not be marked as duplicate, got DuplicateOf=%q", results[2].DuplicateOf)
+	}
+}
+
+func TestDeduplicateResultsSkipsNoChanges(t *testing.T) {
+	// Results without changes should not be deduplicated
+	results := []*DiffResult{
+		{
+			AppInfo:    &AppInfo{Name: "app1"},
+			HasChanges: false,
+			Diffs:      []string{},
+		},
+		{
+			AppInfo:    &AppInfo{Name: "app2"},
+			HasChanges: false,
+			Diffs:      []string{},
+		},
+	}
+
+	deduplicateResults(results)
+
+	if results[0].DuplicateOf != "" {
+		t.Errorf("app1 should not be marked as duplicate")
+	}
+	if results[1].DuplicateOf != "" {
+		t.Errorf("app2 should not be marked as duplicate")
+	}
+}
+
+func TestDeduplicateResultsSkipsErrors(t *testing.T) {
+	// Results with errors should not be deduplicated
+	results := []*DiffResult{
+		{
+			AppInfo:      &AppInfo{Name: "app1"},
+			HasChanges:   true,
+			Diffs:        []string{"diff"},
+			ErrorMessage: "error 1",
+		},
+		{
+			AppInfo:      &AppInfo{Name: "app2"},
+			HasChanges:   true,
+			Diffs:        []string{"diff"},
+			ErrorMessage: "error 2",
+		},
+	}
+
+	deduplicateResults(results)
+
+	if results[0].DuplicateOf != "" {
+		t.Errorf("app1 should not be marked as duplicate (has error)")
+	}
+	if results[1].DuplicateOf != "" {
+		t.Errorf("app2 should not be marked as duplicate (has error)")
+	}
+}
+
+func TestNewDiffReportWithDeduplication(t *testing.T) {
+	results := []*DiffResult{
+		{
+			AppInfo:    &AppInfo{Name: "cert-manager", Status: "Synced", Health: "Healthy"},
+			HasChanges: true,
+			Diffs:      []string{"same diff"},
+		},
+		{
+			AppInfo:    &AppInfo{Name: "foo-cert-manager", Status: "Synced", Health: "Healthy"},
+			HasChanges: true,
+			Diffs:      []string{"same diff"},
+		},
+	}
+
+	// With deduplication enabled (default)
+	report := NewDiffReportWithOptions("Test", results, true)
+	if !report.DedupeDiffs {
+		t.Error("DedupeDiffs should be true")
+	}
+	if results[1].DuplicateOf != "cert-manager" {
+		t.Errorf("foo-cert-manager should be marked as duplicate of cert-manager, got %q", results[1].DuplicateOf)
+	}
+
+	// Reset for next test
+	results[1].DuplicateOf = ""
+
+	// With deduplication disabled
+	report = NewDiffReportWithOptions("Test", results, false)
+	if report.DedupeDiffs {
+		t.Error("DedupeDiffs should be false")
+	}
+	if results[1].DuplicateOf != "" {
+		t.Errorf("foo-cert-manager should not be marked as duplicate when dedupe is disabled")
+	}
+}
+
+func TestFormatAppDiffWithDuplicate(t *testing.T) {
+	result := &DiffResult{
+		AppInfo:     &AppInfo{Name: "app2", Status: "Synced", Health: "Healthy"},
+		HasChanges:  true,
+		Diffs:       []string{"some diff"},
+		DuplicateOf: "app1",
+	}
+
+	formatted := FormatAppDiff(result)
+
+	if !strings.Contains(formatted, "Same diff as `app1`") {
+		t.Errorf("formatted diff should indicate duplicate, got: %s", formatted)
+	}
+	if strings.Contains(formatted, "some diff") {
+		t.Error("formatted diff should not contain actual diff content for duplicates")
+	}
+}
+
+func TestArgoURLOptional(t *testing.T) {
+	// Without server URL, ArgoURL should return empty string
+	info := &AppInfo{
+		Name:      "test-app",
+		Namespace: "argocd",
+		Server:    "",
+		Status:    "Synced",
+		Health:    "Healthy",
+	}
+
+	if url := info.ArgoURL(); url != "" {
+		t.Errorf("ArgoURL() should be empty when Server is empty, got %q", url)
+	}
+
+	// FormatAppDiff should not include the link
+	result := &DiffResult{
+		AppInfo:    info,
+		HasChanges: true,
+		Diffs:      []string{"diff"},
+	}
+	formatted := FormatAppDiff(result)
+	if strings.Contains(formatted, "View in ArgoCD") {
+		t.Error("formatted diff should not contain ArgoCD link when URL is empty")
 	}
 }

@@ -62,9 +62,26 @@ Accepts webhook payloads to generate diffs.
   "base_ref": "abc123",
   "head_ref": "def456",
   "changed_files": ["apps/app1/deployment.yaml"],
-  "workflow_name": "ArgoCD Diff"
+  "workflow_name": "ArgoCD Diff",
+  "dedupe_diffs": true,
+  "argocd_url": "https://argocd.example.com",
+  "ignore_argocd_tracking": true
 }
 ```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `github_token` | Yes | - | GitHub token for posting PR comments |
+| `argocd_token` | Yes | - | ArgoCD API token |
+| `repository` | Yes | - | Repository in `owner/repo` format |
+| `pr_number` | Yes | - | Pull request number |
+| `base_ref` | Yes | - | Base commit SHA |
+| `head_ref` | Yes | - | Head commit SHA |
+| `changed_files` | Yes | - | List of changed file paths |
+| `workflow_name` | No | `"ArgoCD Diff"` | Workflow identifier for comment management |
+| `dedupe_diffs` | No | `true` | Deduplicate identical diffs across apps (shows "Same diff as X") |
+| `argocd_url` | No | - | ArgoCD UI URL for "View in ArgoCD" links (omitted if not set) |
+| `ignore_argocd_tracking` | No | `false` | Ignore `argocd.argoproj.io/*` labels and annotations in diffs (useful for deduplication) |
 
 **Response:**
 ```json
