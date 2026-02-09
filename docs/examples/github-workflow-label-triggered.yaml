@@ -1,0 +1,134 @@
+# Example GitHub Actions workflow for triggering argo-diff on PR labels
+#
+# This workflow does NOT trigger on PR creation. Instead, it triggers when:
+# 1. A label matching "argo-diff=<cluster>" is added to a PR
+# 2. A PR that already has such labels is synchronized (new commits pushed)
+#
+# Usage:
+#   Add labels like "argo-diff=cluster-prod" or "argo-diff=cluster-staging"
+#   to a PR. Only ArgoCD applications whose destination cluster name matches
+#   one of the labeled clusters will be diffed.
+#
+# Prerequisites:
+# 1. Deploy argo-diff service (v0.x.x+ with destination_clusters support)
+# 2. Configure OIDC audience in argo-diff to match this workflow
+# 3. Add your repository to the allowed repos list
+# 4. Set repository variable: ARGO_DIFF_URL
+# 5. Set repository secrets: ARGOCD_TOKEN
+
+name: ArgoCD Diff (Label-Triggered)
+
+on:
+  pull_request:
+    types:
+      - labeled
+      - synchronize
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write  # Required for OIDC token
+
+jobs:
+  diff:
+    name: Generate ArgoCD Diff
+    runs-on: ubuntu-latest
+
+    # Only run if the PR has at least one argo-diff=* label
+    if: >-
+      (github.event.action == 'labeled' && startsWith(github.event.label.name, 'argo-diff='))
+      || (github.event.action == 'synchronize' && contains(toJSON(github.event.pull_request.labels.*.name), 'argo-diff='))
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for accurate diff
+
+      - name: Extract cluster names from labels
+        id: clusters
+        env:
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          # Extract cluster names from argo-diff=<cluster> labels
+          clusters=$(echo "$LABELS_JSON" | jq -r '[.[] | select(startswith("argo-diff=")) | sub("argo-diff="; "")] | @json')
+          echo "clusters=$clusters" >> $GITHUB_OUTPUT
+          echo "Found clusters: $clusters"
+
+      - name: Get changed files
+        id: changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --paginate \
+            "/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --jq '[.[].filename]')
+          echo "files=$files" >> $GITHUB_OUTPUT
+
+      - name: Get OIDC token
+        id: oidc
+        run: |
+          AUTH="Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+          URL="$ACTIONS_ID_TOKEN_REQUEST_URL&audience=argo-diff"
+          token=$(curl -sS -H "$AUTH" "$URL" | jq -r .value)
+          echo "::add-mask::$token"
+          echo "token=$token" >> $GITHUB_OUTPUT
+
+      - name: Trigger argo-diff
+        env:
+          ARGO_DIFF_URL: ${{ vars.ARGO_DIFF_URL }}  # e.g., https://argo-diff.example.com
+          ARGOCD_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+          CLUSTERS: ${{ steps.clusters.outputs.clusters }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.sha }}
+        run: |
+          # Build the payload
+          PAYLOAD=$(jq -nc \
+            --arg github_token "$GITHUB_TOKEN" \
+            --arg argocd_token "$ARGOCD_TOKEN" \
+            --arg repository "$REPOSITORY" \
+            --argjson pr_number "$PR_NUMBER" \
+            --arg base_ref "$BASE_REF" \
+            --arg head_ref "$HEAD_REF" \
+            --argjson changed_files "$CHANGED_FILES" \
+            --argjson destination_clusters "$CLUSTERS" \
+            '{
+              github_token: $github_token,
+              argocd_token: $argocd_token,
+              repository: $repository,
+              pr_number: $pr_number,
+              base_ref: $base_ref,
+              head_ref: $head_ref,
+              changed_files: $changed_files,
+              destination_clusters: $destination_clusters,
+              workflow_name: "ArgoCD Diff (Label-Triggered)"
+            }')
+
+          # Send request to argo-diff with sync=true to process synchronously
+          response=$(curl -sS -w "\n%{http_code}" -X POST "$ARGO_DIFF_URL/webhook?sync=true" \
+            --max-time 300 \
+            -H "Authorization: Bearer $OIDC_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          http_code=$(echo "$response" | tail -n 1)
+          body=$(echo "$response" | sed '$d')
+
+          if [[ "$http_code" != "202" && "$http_code" != "200" ]]; then
+            echo "Error: argo-diff webhook returned $http_code"
+            echo "Response: $body"
+            exit 1
+          fi
+
+          echo "Diff completed successfully"

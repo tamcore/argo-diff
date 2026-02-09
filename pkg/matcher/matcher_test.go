@@ -144,7 +144,7 @@ func TestMatchApplications(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := MatchApplications(tt.apps, tt.repo, tt.changedFiles)
+			got := MatchApplications(tt.apps, tt.repo, tt.changedFiles, nil)
 			if len(got) != tt.wantCount {
 				t.Errorf("MatchApplications() returned %d apps, want %d", len(got), tt.wantCount)
 			}
@@ -191,7 +191,7 @@ func TestMatchApplicationsWithDetails(t *testing.T) {
 		},
 	}
 
-	results := MatchApplicationsWithDetails(apps, "https://github.com/user/repo", []string{"app1/deployment.yaml"})
+	results := MatchApplicationsWithDetails(apps, "https://github.com/user/repo", []string{"app1/deployment.yaml"}, nil)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
@@ -243,4 +243,89 @@ func TestNormalizeRepoURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMatchApplicationsWithDestinationClusters(t *testing.T) {
+	apps := []*appv1.Application{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "app-cluster-a"},
+			Spec: appv1.ApplicationSpec{
+				Source: &appv1.ApplicationSource{
+					RepoURL: "https://github.com/user/repo",
+					Path:    "app1",
+				},
+				Destination: appv1.ApplicationDestination{
+					Name: "cluster-a",
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "app-cluster-b"},
+			Spec: appv1.ApplicationSpec{
+				Source: &appv1.ApplicationSource{
+					RepoURL: "https://github.com/user/repo",
+					Path:    "app1",
+				},
+				Destination: appv1.ApplicationDestination{
+					Name: "cluster-b",
+				},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "app-cluster-c"},
+			Spec: appv1.ApplicationSpec{
+				Source: &appv1.ApplicationSource{
+					RepoURL: "https://github.com/user/repo",
+					Path:    "app1",
+				},
+				Destination: appv1.ApplicationDestination{
+					Name: "cluster-c",
+				},
+			},
+		},
+	}
+
+	changedFiles := []string{"app1/deployment.yaml"}
+
+	t.Run("nil clusters matches all", func(t *testing.T) {
+		got := MatchApplications(apps, "user/repo", changedFiles, nil)
+		if len(got) != 3 {
+			t.Errorf("expected 3 apps, got %d", len(got))
+		}
+	})
+
+	t.Run("empty clusters matches all", func(t *testing.T) {
+		got := MatchApplications(apps, "user/repo", changedFiles, []string{})
+		if len(got) != 3 {
+			t.Errorf("expected 3 apps, got %d", len(got))
+		}
+	})
+
+	t.Run("single cluster filter", func(t *testing.T) {
+		got := MatchApplications(apps, "user/repo", changedFiles, []string{"cluster-a"})
+		if len(got) != 1 {
+			t.Fatalf("expected 1 app, got %d", len(got))
+		}
+		if got[0].Name != "app-cluster-a" {
+			t.Errorf("expected app-cluster-a, got %s", got[0].Name)
+		}
+	})
+
+	t.Run("multiple cluster filter", func(t *testing.T) {
+		got := MatchApplications(apps, "user/repo", changedFiles, []string{"cluster-a", "cluster-c"})
+		if len(got) != 2 {
+			t.Fatalf("expected 2 apps, got %d", len(got))
+		}
+		names := map[string]bool{got[0].Name: true, got[1].Name: true}
+		if !names["app-cluster-a"] || !names["app-cluster-c"] {
+			t.Errorf("expected app-cluster-a and app-cluster-c, got %v", names)
+		}
+	})
+
+	t.Run("non-matching cluster filter", func(t *testing.T) {
+		got := MatchApplications(apps, "user/repo", changedFiles, []string{"cluster-x"})
+		if len(got) != 0 {
+			t.Errorf("expected 0 apps, got %d", len(got))
+		}
+	})
 }

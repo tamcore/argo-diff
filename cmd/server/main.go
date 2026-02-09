@@ -38,6 +38,7 @@ type WebhookPayload struct {
 	ArgocdURL            string   `json:"argocd_url,omitempty"`             // Optional: ArgoCD UI URL for "View in ArgoCD" links
 	IgnoreArgocdTracking *bool    `json:"ignore_argocd_tracking,omitempty"` // Default: false - ignore argocd.argoproj.io/* labels/annotations in diffs
 	CollapseThreshold    *int     `json:"collapse_threshold,omitempty"`     // Default: 3 - collapse all diffs if comment parts exceed this threshold (0 = disabled)
+	DestinationClusters  []string `json:"destination_clusters,omitempty"`   // Optional: only include apps targeting these destination cluster names
 }
 
 type Server struct {
@@ -233,6 +234,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		DedupeDiffs:          dedupeDiffs,
 		IgnoreArgocdTracking: ignoreArgocdTracking,
 		CollapseThreshold:    collapseThreshold,
+		DestinationClusters:  payload.DestinationClusters,
 	}
 
 	// Check if sync processing is requested
@@ -352,7 +354,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 	}
 
 	// Match affected applications
-	affectedApps := matcher.MatchApplications(apps, job.Repository, job.ChangedFiles)
+	affectedApps := matcher.MatchApplications(apps, job.Repository, job.ChangedFiles, job.DestinationClusters)
 
 	// Record how many applications were affected
 	metrics.RecordApplicationsAffected(job.Repository, len(affectedApps))

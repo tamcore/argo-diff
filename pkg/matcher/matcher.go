@@ -15,9 +15,10 @@ type MatchResult struct {
 	MatchReason  string   // Why the app was matched (source path, app definition, etc.)
 }
 
-// MatchApplications returns applications affected by changed files
-func MatchApplications(apps []*appv1.Application, repo string, changedFiles []string) []*appv1.Application {
-	results := MatchApplicationsWithDetails(apps, repo, changedFiles)
+// MatchApplications returns applications affected by changed files.
+// If destinationClusters is non-empty, only apps targeting one of those cluster names are included.
+func MatchApplications(apps []*appv1.Application, repo string, changedFiles []string, destinationClusters []string) []*appv1.Application {
+	results := MatchApplicationsWithDetails(apps, repo, changedFiles, destinationClusters)
 	matched := make([]*appv1.Application, 0, len(results))
 	for _, r := range results {
 		matched = append(matched, r.App)
@@ -25,16 +26,23 @@ func MatchApplications(apps []*appv1.Application, repo string, changedFiles []st
 	return matched
 }
 
-// MatchApplicationsWithDetails returns applications affected by changed files with match details
-func MatchApplicationsWithDetails(apps []*appv1.Application, repo string, changedFiles []string) []*MatchResult {
+// MatchApplicationsWithDetails returns applications affected by changed files with match details.
+// If destinationClusters is non-empty, only apps targeting one of those cluster names are included.
+func MatchApplicationsWithDetails(apps []*appv1.Application, repo string, changedFiles []string, destinationClusters []string) []*MatchResult {
 	slog.Info("Starting application matching",
 		"repo", repo,
 		"normalizedRepo", normalizeRepoURL(repo),
 		"changedFiles", changedFiles,
-		"totalApps", len(apps))
+		"totalApps", len(apps),
+		"destinationClusters", destinationClusters)
+
+	clusterSet := buildClusterSet(destinationClusters)
 
 	var results []*MatchResult
 	for _, app := range apps {
+		if len(clusterSet) > 0 && !clusterSet[app.Spec.Destination.Name] {
+			continue
+		}
 		if result := matchApp(app, repo, changedFiles); result != nil {
 			results = append(results, result)
 		}
@@ -228,4 +236,19 @@ func uniqueStrings(input []string) []string {
 		}
 	}
 	return result
+}
+
+// buildClusterSet builds a lookup set from a slice of cluster names.
+// Returns an empty map when no clusters are specified (meaning no filtering).
+func buildClusterSet(clusters []string) map[string]bool {
+	if len(clusters) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(clusters))
+	for _, c := range clusters {
+		if c != "" {
+			set[c] = true
+		}
+	}
+	return set
 }

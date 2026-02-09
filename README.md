@@ -66,7 +66,8 @@ Accepts webhook payloads to generate diffs.
   "dedupe_diffs": true,
   "argocd_url": "https://argocd.example.com",
   "ignore_argocd_tracking": true,
-  "collapse_threshold": 3
+  "collapse_threshold": 3,
+  "destination_clusters": ["cluster-prod", "cluster-staging"]
 }
 ```
 
@@ -84,6 +85,7 @@ Accepts webhook payloads to generate diffs.
 | `argocd_url` | No | - | ArgoCD UI URL for "View in ArgoCD" links (omitted if not set) |
 | `ignore_argocd_tracking` | No | `false` | Ignore `argocd.argoproj.io/*` labels and annotations in diffs (useful for deduplication) |
 | `collapse_threshold` | No | `3` | Collapse all diffs (hide behind `<details>`) when comment parts exceed this threshold. Set to `0` to disable |
+| `destination_clusters` | No | - | List of ArgoCD destination cluster names to filter on. Only apps targeting these clusters are diffed. Omit to include all clusters |
 
 **Response:**
 ```json
