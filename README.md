@@ -83,7 +83,8 @@ Accepts webhook payloads to generate diffs.
 | `workflow_name` | No | `"ArgoCD Diff"` | Workflow identifier for comment management |
 | `dedupe_diffs` | No | `true` | Deduplicate identical diffs across apps (shows "Same diff as X") |
 | `argocd_url` | No | - | ArgoCD UI URL for "View in ArgoCD" links (omitted if not set) |
-| `ignore_argocd_tracking` | No | `false` | Ignore `argocd.argoproj.io/*` labels and annotations in diffs (useful for deduplication) |
+| `ignore_argocd_tracking` | No | `false` | **Deprecated**: Use `ignored_metadata` instead. Ignore `argocd.argoproj.io/*` labels and annotations in diffs |
+| `ignored_metadata` | No | `[]` | List of label/annotation keys or prefixes to ignore in diffs. Patterns ending with `/` are prefix matches, others are exact matches. Example: `["argocd.argoproj.io/", "app.kubernetes.io/version", "helm.sh/chart"]` |
 | `collapse_threshold` | No | `3` | Collapse all diffs (hide behind `<details>`) when comment parts exceed this threshold. Set to `0` to disable |
 | `destination_clusters` | No | - | List of ArgoCD destination cluster names to filter on. Only apps targeting these clusters are diffed. Omit to include all clusters |
 
@@ -92,6 +93,58 @@ Accepts webhook payloads to generate diffs.
 {
   "status": "accepted",
   "message": "Job queued for owner/repo PR #123"
+}
+```
+
+#### Examples
+
+**Basic usage with custom metadata filtering:**
+```json
+{
+  "github_token": "ghp_xxxx",
+  "argocd_token": "argocd.token=xxxx",
+  "repository": "owner/repo",
+  "pr_number": 123,
+  "base_ref": "abc123",
+  "head_ref": "def456",
+  "changed_files": ["charts/app/values.yaml"],
+  "ignored_metadata": [
+    "argocd.argoproj.io/",
+    "app.kubernetes.io/version",
+    "helm.sh/chart"
+  ]
+}
+```
+
+**Filtering only version-related labels:**
+```json
+{
+  "github_token": "ghp_xxxx",
+  "argocd_token": "argocd.token=xxxx",
+  "repository": "owner/repo",
+  "pr_number": 123,
+  "base_ref": "abc123",
+  "head_ref": "def456",
+  "changed_files": ["charts/app/Chart.yaml"],
+  "ignored_metadata": [
+    "app.kubernetes.io/version",
+    "chart.kubernetes.io/version",
+    "helm.sh/chart"
+  ]
+}
+```
+
+**Using deprecated `ignore_argocd_tracking` (backward compatible):**
+```json
+{
+  "github_token": "ghp_xxxx",
+  "argocd_token": "argocd.token=xxxx",
+  "repository": "owner/repo",
+  "pr_number": 123,
+  "base_ref": "abc123",
+  "head_ref": "def456",
+  "changed_files": ["charts/app/values.yaml"],
+  "ignore_argocd_tracking": true
 }
 ```
 

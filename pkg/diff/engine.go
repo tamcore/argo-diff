@@ -63,10 +63,19 @@ func GenerateDiffWithOptions(baseManifests, headManifests []string, appInfo *App
 	baseResources = filterHelmHooks(baseResources)
 	headResources = filterHelmHooks(headResources)
 
-	// Filter out ArgoCD tracking labels/annotations if requested
+	// Build list of metadata patterns to filter
+	var metadataPatterns []string
 	if opts.IgnoreArgocdTracking {
-		baseResources = filterArgocdTracking(baseResources)
-		headResources = filterArgocdTracking(headResources)
+		metadataPatterns = append(metadataPatterns, argocdTrackingPrefix)
+	}
+	if len(opts.IgnoredMetadata) > 0 {
+		metadataPatterns = append(metadataPatterns, opts.IgnoredMetadata...)
+	}
+
+	// Filter metadata if patterns are specified
+	if len(metadataPatterns) > 0 {
+		baseResources = filterMetadata(baseResources, metadataPatterns)
+		headResources = filterMetadata(headResources, metadataPatterns)
 	}
 
 	// Create resource maps for comparison
@@ -339,9 +348,13 @@ func filterHelmHooks(resources []*Resource) []*Resource {
 // argocdTrackingPrefix is the prefix for ArgoCD tracking labels and annotations
 const argocdTrackingPrefix = "argocd.argoproj.io/"
 
-// filterArgocdTracking removes ArgoCD tracking labels and annotations from resources
-// and regenerates the raw YAML without them
-func filterArgocdTracking(resources []*Resource) []*Resource {
+// filterMetadata removes specified labels and annotations from resources
+// based on a list of patterns (prefixes or exact matches) and regenerates the raw YAML
+func filterMetadata(resources []*Resource, patterns []string) []*Resource {
+	if len(patterns) == 0 {
+		return resources
+	}
+
 	filtered := make([]*Resource, 0, len(resources))
 	for _, r := range resources {
 		// Parse the raw YAML into a generic map to manipulate
@@ -352,13 +365,13 @@ func filterArgocdTracking(resources []*Resource) []*Resource {
 			continue
 		}
 
-		// Remove ArgoCD tracking from metadata
+		// Remove matching metadata
 		if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
 			// Filter labels
 			if labels, ok := metadata["labels"].(map[string]interface{}); ok {
 				filteredLabels := make(map[string]interface{})
 				for k, v := range labels {
-					if !strings.HasPrefix(k, argocdTrackingPrefix) {
+					if !shouldFilterKey(k, patterns) {
 						filteredLabels[k] = v
 					}
 				}
@@ -373,7 +386,7 @@ func filterArgocdTracking(resources []*Resource) []*Resource {
 			if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
 				filteredAnnotations := make(map[string]interface{})
 				for k, v := range annotations {
-					if !strings.HasPrefix(k, argocdTrackingPrefix) {
+					if !shouldFilterKey(k, patterns) {
 						filteredAnnotations[k] = v
 					}
 				}
@@ -403,22 +416,41 @@ func filterArgocdTracking(resources []*Resource) []*Resource {
 			raw:        strings.TrimSpace(buf.String()),
 		}
 		// Also filter the in-memory metadata
-		newResource.Metadata.Labels = filterMapByPrefix(r.Metadata.Labels, argocdTrackingPrefix)
-		newResource.Metadata.Annotations = filterMapByPrefix(r.Metadata.Annotations, argocdTrackingPrefix)
+		newResource.Metadata.Labels = filterMapByPatterns(r.Metadata.Labels, patterns)
+		newResource.Metadata.Annotations = filterMapByPatterns(r.Metadata.Annotations, patterns)
 
 		filtered = append(filtered, newResource)
 	}
 	return filtered
 }
 
-// filterMapByPrefix removes entries with keys starting with the given prefix
-func filterMapByPrefix(m map[string]string, prefix string) map[string]string {
+// shouldFilterKey determines if a key should be filtered based on patterns
+// Supports both prefix matching (pattern ending with '/') and exact matching
+func shouldFilterKey(key string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if strings.HasSuffix(pattern, "/") {
+			// Prefix match
+			if strings.HasPrefix(key, pattern) {
+				return true
+			}
+		} else {
+			// Exact match
+			if key == pattern {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// filterMapByPatterns removes entries matching any of the given patterns
+func filterMapByPatterns(m map[string]string, patterns []string) map[string]string {
 	if m == nil {
 		return nil
 	}
 	result := make(map[string]string)
 	for k, v := range m {
-		if !strings.HasPrefix(k, prefix) {
+		if !shouldFilterKey(k, patterns) {
 			result[k] = v
 		}
 	}

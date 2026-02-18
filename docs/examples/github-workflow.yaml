@@ -9,6 +9,10 @@
 # 3. Add your repository to the allowed repos list
 # 4. Set repository variable: ARGO_DIFF_URL
 # 5. Set repository secrets: ARGOCD_TOKEN
+#
+# Optional: Customize ignored_metadata in the payload to filter out
+# labels/annotations that create noise in diffs (e.g., version labels,
+# chart metadata). This helps reduce duplicate diffs across apps.
 
 name: ArgoCD Diff Preview
 
@@ -91,7 +95,12 @@ jobs:
               base_ref: $base_ref,
               head_ref: $head_ref,
               changed_files: $changed_files,
-              workflow_name: "ArgoCD Diff Preview"
+              workflow_name: "ArgoCD Diff Preview",
+              ignored_metadata: [
+                "argocd.argoproj.io/",
+                "app.kubernetes.io/version",
+                "helm.sh/chart"
+              ]
             }')
 
           # Send request to argo-diff with sync=true to process synchronously

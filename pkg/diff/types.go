@@ -94,7 +94,8 @@ type DiffResult struct {
 
 // DiffOptions contains options for diff generation
 type DiffOptions struct {
-	IgnoreArgocdTracking bool // Remove argocd.argoproj.io/* labels/annotations before comparing
+	IgnoreArgocdTracking bool     // Deprecated: Use IgnoredMetadata instead. Remove argocd.argoproj.io/* labels/annotations before comparing
+	IgnoredMetadata      []string // List of label/annotation keys or prefixes to ignore (e.g., "argocd.argoproj.io/", "app.kubernetes.io/version")
 }
 
 // DiffReport contains the complete diff report for all applications

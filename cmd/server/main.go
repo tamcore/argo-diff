@@ -36,7 +36,8 @@ type WebhookPayload struct {
 	WorkflowName         string   `json:"workflow_name"`
 	DedupeDiffs          *bool    `json:"dedupe_diffs,omitempty"`           // Default: true - deduplicate identical diffs across apps
 	ArgocdURL            string   `json:"argocd_url,omitempty"`             // Optional: ArgoCD UI URL for "View in ArgoCD" links
-	IgnoreArgocdTracking *bool    `json:"ignore_argocd_tracking,omitempty"` // Default: false - ignore argocd.argoproj.io/* labels/annotations in diffs
+	IgnoreArgocdTracking *bool    `json:"ignore_argocd_tracking,omitempty"` // Deprecated: Use IgnoredMetadata instead. Default: false - ignore argocd.argoproj.io/* labels/annotations in diffs
+	IgnoredMetadata      []string `json:"ignored_metadata,omitempty"`       // List of label/annotation keys or prefixes to ignore (e.g., "argocd.argoproj.io/", "app.kubernetes.io/version")
 	CollapseThreshold    *int     `json:"collapse_threshold,omitempty"`     // Default: 3 - collapse all diffs if comment parts exceed this threshold (0 = disabled)
 	DestinationClusters  []string `json:"destination_clusters,omitempty"`   // Optional: only include apps targeting these destination cluster names
 }
@@ -233,6 +234,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		ArgocdURL:            payload.ArgocdURL,
 		DedupeDiffs:          dedupeDiffs,
 		IgnoreArgocdTracking: ignoreArgocdTracking,
+		IgnoredMetadata:      payload.IgnoredMetadata,
 		CollapseThreshold:    collapseThreshold,
 		DestinationClusters:  payload.DestinationClusters,
 	}
@@ -441,6 +443,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 		// Generate diff with options
 		diffOpts := &diff.DiffOptions{
 			IgnoreArgocdTracking: job.IgnoreArgocdTracking,
+			IgnoredMetadata:      job.IgnoredMetadata,
 		}
 		result, err := diff.GenerateDiffWithOptions(baseManifests, headManifests, appInfo, diffOpts)
 		if err != nil {
