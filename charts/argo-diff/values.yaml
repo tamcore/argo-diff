@@ -87,6 +87,18 @@ ingress:
   #    hosts:
   #      - argo-diff.local
 
+# Gateway API HTTPRoute — alternative to Ingress for clusters running nginx-gateway-fabric
+# or another Gateway API implementation.
+# Note: the previous proxy-read-timeout: "300" annotation has no direct HTTPRoute equivalent;
+# configure read timeouts via an NGF UpstreamSettingsPolicy if needed.
+httpRoute:
+  enabled: false
+  parentRefs: []
+  #  - name: nginx-gateway
+  #    namespace: nginx-gateway
+  hostnames: []
+  #  - argo-diff.example.com
+
 resources:
   limits:
     cpu: 500m
