@@ -1,6 +1,6 @@
 module github.com/tamcore/argo-diff
 
-go 1.25.6
+go 1.26.0
 
 require (
 	github.com/argoproj/argo-cd/v3 v3.2.6
