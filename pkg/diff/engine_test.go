@@ -3,6 +3,8 @@ package diff
 import (
 	"strings"
 	"testing"
+
+	appv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
 )
 
 func TestGenerateDiff(t *testing.T) {
@@ -548,5 +550,295 @@ func TestArgoURLOptional(t *testing.T) {
 	formatted := FormatAppDiff(result)
 	if strings.Contains(formatted, "View in ArgoCD") {
 		t.Error("formatted diff should not contain ArgoCD link when URL is empty")
+	}
+}
+
+func TestNewAppInfo(t *testing.T) {
+	app := &appv1.Application{}
+	app.Name = "my-app"
+	app.Namespace = "argocd"
+	app.Spec.Destination.Namespace = "my-namespace"
+	app.Status.Sync.Status = "Synced"
+	app.Status.Health.Status = "Healthy"
+
+	info := NewAppInfo(app, "https://argocd.example.com")
+
+	if info.Name != "my-app" {
+		t.Errorf("Name = %q, want %q", info.Name, "my-app")
+	}
+	if info.Namespace != "argocd" {
+		t.Errorf("Namespace = %q, want %q", info.Namespace, "argocd")
+	}
+	if info.DestinationNamespace != "my-namespace" {
+		t.Errorf("DestinationNamespace = %q, want %q", info.DestinationNamespace, "my-namespace")
+	}
+	if info.Status != "Synced" {
+		t.Errorf("Status = %q, want %q", info.Status, "Synced")
+	}
+	if info.Health != "Healthy" {
+		t.Errorf("Health = %q, want %q", info.Health, "Healthy")
+	}
+	if info.Server != "https://argocd.example.com" {
+		t.Errorf("Server = %q, want %q", info.Server, "https://argocd.example.com")
+	}
+}
+
+func TestNewAppInfoDefaults(t *testing.T) {
+	// When status/health are empty, they should default to "Unknown"
+	app := &appv1.Application{}
+	app.Name = "app"
+	app.Namespace = "argocd"
+
+	info := NewAppInfo(app, "")
+
+	if info.Status != "Unknown" {
+		t.Errorf("Status = %q, want %q", info.Status, "Unknown")
+	}
+	if info.Health != "Unknown" {
+		t.Errorf("Health = %q, want %q", info.Health, "Unknown")
+	}
+	if info.DestinationNamespace != "" {
+		t.Errorf("DestinationNamespace = %q, want empty", info.DestinationNamespace)
+	}
+}
+
+func TestJSONToYAML(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantKey  string
+		wantErr  bool
+	}{
+		{
+			name:    "simple object",
+			input:   `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test"}}`,
+			wantKey: "apiVersion",
+			wantErr: false,
+		},
+		{
+			name:    "nested object",
+			input:   `{"spec":{"replicas":3}}`,
+			wantKey: "spec",
+			wantErr: false,
+		},
+		{
+			name:    "invalid JSON",
+			input:   `{invalid json`,
+			wantErr: true,
+		},
+		{
+			name:    "empty object",
+			input:   `{}`,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := jsonToYAML(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("jsonToYAML() error = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("jsonToYAML() error = %v, want nil", err)
+				return
+			}
+			if tt.wantKey != "" && !strings.Contains(got, tt.wantKey) {
+				t.Errorf("jsonToYAML() output %q does not contain expected key %q", got, tt.wantKey)
+			}
+		})
+	}
+}
+
+func TestShouldFilterKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		patterns []string
+		want     bool
+	}{
+		{"prefix match", "argocd.argoproj.io/tracking-id", []string{"argocd.argoproj.io/"}, true},
+		{"prefix match multiple keys", "app.kubernetes.io/managed-by", []string{"argocd.argoproj.io/", "app.kubernetes.io/"}, true},
+		{"exact match", "app.kubernetes.io/version", []string{"app.kubernetes.io/version"}, true},
+		{"no match prefix", "my-label", []string{"argocd.argoproj.io/"}, false},
+		{"prefix without trailing slash is exact", "argocd.argoproj.io", []string{"argocd.argoproj.io/"}, false},
+		{"empty patterns", "any-key", []string{}, false},
+		{"exact miss", "my-label", []string{"other-label"}, false},
+		{"second pattern matches", "my-key", []string{"other/", "my-key"}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldFilterKey(tt.key, tt.patterns)
+			if got != tt.want {
+				t.Errorf("shouldFilterKey(%q, %v) = %v, want %v", tt.key, tt.patterns, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFilterMapByPatterns(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    map[string]string
+		patterns []string
+		wantLen  int
+		wantNil  bool
+	}{
+		{
+			name:    "nil map returns nil",
+			input:   nil,
+			patterns: []string{"argocd.argoproj.io/"},
+			wantNil: true,
+		},
+		{
+			name:    "filter matching keys",
+			input:   map[string]string{"argocd.argoproj.io/app": "x", "keep": "y"},
+			patterns: []string{"argocd.argoproj.io/"},
+			wantLen: 1,
+		},
+		{
+			name:    "filter all keys returns nil",
+			input:   map[string]string{"argocd.argoproj.io/app": "x"},
+			patterns: []string{"argocd.argoproj.io/"},
+			wantNil: true,
+		},
+		{
+			name:    "no patterns keeps all",
+			input:   map[string]string{"a": "1", "b": "2"},
+			patterns: []string{},
+			wantLen: 2,
+		},
+		{
+			name:    "exact match removed",
+			input:   map[string]string{"version": "1.0", "name": "app"},
+			patterns: []string{"version"},
+			wantLen: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterMapByPatterns(tt.input, tt.patterns)
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("filterMapByPatterns() = %v, want nil", got)
+				}
+				return
+			}
+			if len(got) != tt.wantLen {
+				t.Errorf("filterMapByPatterns() len = %d, want %d", len(got), tt.wantLen)
+			}
+		})
+	}
+}
+
+func TestFilterMetadataViaOptions(t *testing.T) {
+	base := []string{`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  namespace: default
+  labels:
+    argocd.argoproj.io/app: my-app
+    app: my-app
+  annotations:
+    argocd.argoproj.io/tracking-id: "abc123"
+spec:
+  replicas: 1
+`}
+	head := []string{`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  namespace: default
+  labels:
+    argocd.argoproj.io/app: my-app
+    app: my-app
+  annotations:
+    argocd.argoproj.io/tracking-id: "different"
+spec:
+  replicas: 1
+`}
+
+	appInfo := &AppInfo{Name: "test"}
+
+	// Without filtering: the tracking-id annotation change is detected
+	resultNoFilter, err := GenerateDiff(base, head, appInfo)
+	if err != nil {
+		t.Fatalf("GenerateDiff() error = %v", err)
+	}
+	if !resultNoFilter.HasChanges {
+		t.Error("without filter: should detect tracking-id annotation change")
+	}
+
+	// With filtering: argocd.argoproj.io/ annotations/labels are ignored → no change
+	opts := &DiffOptions{IgnoredMetadata: []string{"argocd.argoproj.io/"}}
+	resultFiltered, err := GenerateDiffWithOptions(base, head, appInfo, opts)
+	if err != nil {
+		t.Fatalf("GenerateDiffWithOptions() error = %v", err)
+	}
+	if resultFiltered.HasChanges {
+		t.Error("with filter: argocd tracking annotation change should be ignored")
+	}
+}
+
+func TestSortResources(t *testing.T) {
+	resources := []*Resource{
+		{Kind: "Service", Metadata: struct {
+			Name        string            `yaml:"name"`
+			Namespace   string            `yaml:"namespace,omitempty"`
+			Labels      map[string]string `yaml:"labels,omitempty"`
+			Annotations map[string]string `yaml:"annotations,omitempty"`
+		}{Name: "z-svc"}},
+		{Kind: "Deployment", Metadata: struct {
+			Name        string            `yaml:"name"`
+			Namespace   string            `yaml:"namespace,omitempty"`
+			Labels      map[string]string `yaml:"labels,omitempty"`
+			Annotations map[string]string `yaml:"annotations,omitempty"`
+		}{Name: "b-deploy"}},
+		{Kind: "Deployment", Metadata: struct {
+			Name        string            `yaml:"name"`
+			Namespace   string            `yaml:"namespace,omitempty"`
+			Labels      map[string]string `yaml:"labels,omitempty"`
+			Annotations map[string]string `yaml:"annotations,omitempty"`
+		}{Name: "a-deploy"}},
+	}
+
+	SortResources(resources)
+
+	// Sorted: Deployment/a-deploy, Deployment/b-deploy, Service/z-svc
+	if resources[0].Kind != "Deployment" || resources[0].Metadata.Name != "a-deploy" {
+		t.Errorf("resources[0] = %s/%s, want Deployment/a-deploy", resources[0].Kind, resources[0].Metadata.Name)
+	}
+	if resources[1].Kind != "Deployment" || resources[1].Metadata.Name != "b-deploy" {
+		t.Errorf("resources[1] = %s/%s, want Deployment/b-deploy", resources[1].Kind, resources[1].Metadata.Name)
+	}
+	if resources[2].Kind != "Service" || resources[2].Metadata.Name != "z-svc" {
+		t.Errorf("resources[2] = %s/%s, want Service/z-svc", resources[2].Kind, resources[2].Metadata.Name)
+	}
+}
+
+func TestParseManifestsJSON(t *testing.T) {
+	// ArgoCD returns JSON manifests; verify they are parsed correctly
+	manifests := []string{`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test","namespace":"default"},"data":{"key":"value"}}`}
+
+	resources, err := parseManifests(manifests)
+	if err != nil {
+		t.Fatalf("parseManifests() error = %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("parseManifests() returned %d resources, want 1", len(resources))
+	}
+	if resources[0].Kind != "ConfigMap" {
+		t.Errorf("Kind = %q, want %q", resources[0].Kind, "ConfigMap")
+	}
+	if resources[0].Metadata.Name != "test" {
+		t.Errorf("Name = %q, want %q", resources[0].Metadata.Name, "test")
 	}
 }
