@@ -397,6 +397,134 @@ func TestFormatAppDiffWithDuplicate(t *testing.T) {
 	}
 }
 
+func TestGenerateDiffNamespaceNormalization(t *testing.T) {
+	// When a chart PR adds metadata.namespace equal to the app's destination
+	// namespace, resources should be matched (modification) not treated as
+	// delete + add.
+	baseManifests := []string{`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: home-assistant
+spec:
+  replicas: 1
+`}
+	headManifests := []string{`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: home-assistant
+  namespace: home-assistant
+spec:
+  replicas: 1
+`}
+
+	appInfo := &AppInfo{
+		Name:                 "home-assistant",
+		Namespace:            "argocd",
+		DestinationNamespace: "home-assistant",
+	}
+
+	result, err := GenerateDiff(baseManifests, headManifests, appInfo)
+	if err != nil {
+		t.Fatalf("GenerateDiff() error = %v", err)
+	}
+
+	// Adding metadata.namespace equal to destination should show as a
+	// modification, not delete + add.
+	if result.ResourcesDeleted != 0 {
+		t.Errorf("ResourcesDeleted = %d, want 0 (namespace matches destination, not a new resource)", result.ResourcesDeleted)
+	}
+	if result.ResourcesAdded != 0 {
+		t.Errorf("ResourcesAdded = %d, want 0 (namespace matches destination, not a new resource)", result.ResourcesAdded)
+	}
+	if result.ResourcesModified != 1 {
+		t.Errorf("ResourcesModified = %d, want 1", result.ResourcesModified)
+	}
+}
+
+func TestGenerateDiffNamespaceNormalizationNoChange(t *testing.T) {
+	// When base has no namespace and head adds the destination namespace,
+	// but content is otherwise identical, it should show as a modification
+	// (not no-change, since the raw YAML did change).
+	baseManifests := []string{`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-config
+data:
+  key: value
+`}
+	headManifests := []string{`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-config
+  namespace: my-app
+data:
+  key: value
+`}
+
+	appInfo := &AppInfo{
+		Name:                 "my-app",
+		Namespace:            "argocd",
+		DestinationNamespace: "my-app",
+	}
+
+	result, err := GenerateDiff(baseManifests, headManifests, appInfo)
+	if err != nil {
+		t.Fatalf("GenerateDiff() error = %v", err)
+	}
+
+	if result.ResourcesDeleted != 0 {
+		t.Errorf("ResourcesDeleted = %d, want 0", result.ResourcesDeleted)
+	}
+	if result.ResourcesAdded != 0 {
+		t.Errorf("ResourcesAdded = %d, want 0", result.ResourcesAdded)
+	}
+}
+
+func TestGenerateDiffNamespaceNonDestination(t *testing.T) {
+	// When a resource's namespace does NOT match the destination namespace,
+	// it should still be treated as a distinct key (not normalized).
+	baseManifests := []string{`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-config
+data:
+  key: value
+`}
+	headManifests := []string{`
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-config
+  namespace: other-namespace
+data:
+  key: value
+`}
+
+	appInfo := &AppInfo{
+		Name:                 "my-app",
+		Namespace:            "argocd",
+		DestinationNamespace: "my-app",
+	}
+
+	result, err := GenerateDiff(baseManifests, headManifests, appInfo)
+	if err != nil {
+		t.Fatalf("GenerateDiff() error = %v", err)
+	}
+
+	// namespace changed to a non-destination namespace → delete + add
+	if result.ResourcesDeleted != 1 {
+		t.Errorf("ResourcesDeleted = %d, want 1 (namespace changed to non-destination)", result.ResourcesDeleted)
+	}
+	if result.ResourcesAdded != 1 {
+		t.Errorf("ResourcesAdded = %d, want 1 (namespace changed to non-destination)", result.ResourcesAdded)
+	}
+}
+
 func TestArgoURLOptional(t *testing.T) {
 	// Without server URL, ArgoURL should return empty string
 	info := &AppInfo{

@@ -78,15 +78,30 @@ func GenerateDiffWithOptions(baseManifests, headManifests []string, appInfo *App
 		headResources = filterMetadata(headResources, metadataPatterns)
 	}
 
+	// Determine destination namespace for key normalization.
+	// When a chart adds an explicit metadata.namespace that matches the app's
+	// destination namespace, we treat it as equivalent to omitting the namespace,
+	// so it shows as a modification rather than a delete + add pair.
+	destNS := ""
+	if appInfo != nil {
+		destNS = appInfo.DestinationNamespace
+	}
+	keyFor := func(r *Resource) string {
+		if destNS != "" && r.Metadata.Namespace == destNS {
+			return fmt.Sprintf("%s/%s/%s", r.APIVersion, r.Kind, r.Metadata.Name)
+		}
+		return r.key()
+	}
+
 	// Create resource maps for comparison
 	baseMap := make(map[string]*Resource)
 	for _, r := range baseResources {
-		baseMap[r.key()] = r
+		baseMap[keyFor(r)] = r
 	}
 
 	headMap := make(map[string]*Resource)
 	for _, r := range headResources {
-		headMap[r.key()] = r
+		headMap[keyFor(r)] = r
 	}
 
 	// Find modified and deleted resources

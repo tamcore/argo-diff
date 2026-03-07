@@ -6,21 +6,23 @@ import (
 
 // AppInfo contains metadata about an ArgoCD application for diff generation
 type AppInfo struct {
-	Name      string
-	Namespace string
-	Server    string // ArgoCD server URL for generating links
-	Status    string // Synced, OutOfSync, Unknown
-	Health    string // Healthy, Progressing, Degraded, Suspended, Missing, Unknown
+	Name                 string
+	Namespace            string
+	DestinationNamespace string // destination namespace from app.Spec.Destination.Namespace
+	Server               string // ArgoCD server URL for generating links
+	Status               string // Synced, OutOfSync, Unknown
+	Health               string // Healthy, Progressing, Degraded, Suspended, Missing, Unknown
 }
 
 // NewAppInfo creates AppInfo from an ArgoCD application
 func NewAppInfo(app *appv1.Application, serverURL string) *AppInfo {
 	info := &AppInfo{
-		Name:      app.Name,
-		Namespace: app.Namespace,
-		Server:    serverURL,
-		Status:    "Unknown",
-		Health:    "Unknown",
+		Name:                 app.Name,
+		Namespace:            app.Namespace,
+		DestinationNamespace: app.Spec.Destination.Namespace,
+		Server:               serverURL,
+		Status:               "Unknown",
+		Health:               "Unknown",
 	}
 
 	if app.Status.Sync.Status != "" {
