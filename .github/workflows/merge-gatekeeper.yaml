@@ -1,0 +1,19 @@
+---
+name: Merge Gatekeeper
+
+on:
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  merge-gatekeeper:
+    runs-on: ubuntu-slim
+    permissions:
+      checks: read
+      statuses: read
+    steps:
+      - name: Run Merge Gatekeeper
+        uses: tamcore/pr-merge-gatekeeper@30046598ce024835e0f8178ef027577aaf67cb85 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
