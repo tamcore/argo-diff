@@ -604,10 +604,10 @@ func TestNewAppInfoDefaults(t *testing.T) {
 
 func TestJSONToYAML(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantKey  string
-		wantErr  bool
+		name    string
+		input   string
+		wantKey string
+		wantErr bool
 	}{
 		{
 			name:    "simple object",
@@ -689,34 +689,34 @@ func TestFilterMapByPatterns(t *testing.T) {
 		wantNil  bool
 	}{
 		{
-			name:    "nil map returns nil",
-			input:   nil,
+			name:     "nil map returns nil",
+			input:    nil,
 			patterns: []string{"argocd.argoproj.io/"},
-			wantNil: true,
+			wantNil:  true,
 		},
 		{
-			name:    "filter matching keys",
-			input:   map[string]string{"argocd.argoproj.io/app": "x", "keep": "y"},
+			name:     "filter matching keys",
+			input:    map[string]string{"argocd.argoproj.io/app": "x", "keep": "y"},
 			patterns: []string{"argocd.argoproj.io/"},
-			wantLen: 1,
+			wantLen:  1,
 		},
 		{
-			name:    "filter all keys returns nil",
-			input:   map[string]string{"argocd.argoproj.io/app": "x"},
+			name:     "filter all keys returns nil",
+			input:    map[string]string{"argocd.argoproj.io/app": "x"},
 			patterns: []string{"argocd.argoproj.io/"},
-			wantNil: true,
+			wantNil:  true,
 		},
 		{
-			name:    "no patterns keeps all",
-			input:   map[string]string{"a": "1", "b": "2"},
+			name:     "no patterns keeps all",
+			input:    map[string]string{"a": "1", "b": "2"},
 			patterns: []string{},
-			wantLen: 2,
+			wantLen:  2,
 		},
 		{
-			name:    "exact match removed",
-			input:   map[string]string{"version": "1.0", "name": "app"},
+			name:     "exact match removed",
+			input:    map[string]string{"version": "1.0", "name": "app"},
 			patterns: []string{"version"},
-			wantLen: 1,
+			wantLen:  1,
 		},
 	}
 

@@ -161,21 +161,21 @@ func FormatAppDiff(result *DiffResult) string {
 	var sb strings.Builder
 
 	// Header with app name
-	sb.WriteString(fmt.Sprintf("### 📝 `%s`\n\n", result.AppInfo.Name))
+	fmt.Fprintf(&sb, "### 📝 `%s`\n\n", result.AppInfo.Name)
 
 	// Status and health line
-	sb.WriteString(fmt.Sprintf("**Status:** %s %s | **Health:** %s %s\n\n",
+	fmt.Fprintf(&sb, "**Status:** %s %s | **Health:** %s %s\n\n",
 		result.AppInfo.StatusEmoji(), result.AppInfo.Status,
-		result.AppInfo.HealthEmoji(), result.AppInfo.Health))
+		result.AppInfo.HealthEmoji(), result.AppInfo.Health)
 
 	// ArgoCD link if available
 	if url := result.AppInfo.ArgoURL(); url != "" {
-		sb.WriteString(fmt.Sprintf("[View in ArgoCD](%s)\n\n", url))
+		fmt.Fprintf(&sb, "[View in ArgoCD](%s)\n\n", url)
 	}
 
 	// Check if this is a deduplicated diff
 	if result.DuplicateOf != "" {
-		sb.WriteString(fmt.Sprintf("_Same diff as `%s`_\n", result.DuplicateOf))
+		fmt.Fprintf(&sb, "_Same diff as `%s`_\n", result.DuplicateOf)
 		return sb.String()
 	}
 
@@ -193,14 +193,14 @@ func FormatReport(report *DiffReport) string {
 	sb.WriteString("# ArgoCD Diff Preview\n\n")
 
 	// Summary
-	sb.WriteString(fmt.Sprintf("**%d** of **%d** applications have changes\n\n",
-		report.AppsWithDiffs, report.TotalApps))
+	fmt.Fprintf(&sb, "**%d** of **%d** applications have changes\n\n",
+		report.AppsWithDiffs, report.TotalApps)
 
 	// Timestamp
-	sb.WriteString(fmt.Sprintf("_Generated at %s_\n\n", report.Timestamp))
+	fmt.Fprintf(&sb, "_Generated at %s_\n\n", report.Timestamp)
 
 	// Workflow identifier (for comment management)
-	sb.WriteString(fmt.Sprintf("<!-- argocd-diff-workflow: %s -->\n\n", report.WorkflowName))
+	fmt.Fprintf(&sb, "<!-- argocd-diff-workflow: %s -->\n\n", report.WorkflowName)
 
 	sb.WriteString("---\n\n")
 
@@ -682,8 +682,8 @@ func generateUnifiedDiff(oldLines, newLines []string, filename string, contextLi
 	timestamp := "+0000"
 
 	// Write file headers
-	buf.WriteString(fmt.Sprintf("--- %s\t%s\n", filename, timestamp))
-	buf.WriteString(fmt.Sprintf("+++ %s\t%s\n", filename, timestamp))
+	fmt.Fprintf(&buf, "--- %s\t%s\n", filename, timestamp)
+	fmt.Fprintf(&buf, "+++ %s\t%s\n", filename, timestamp)
 
 	// Find hunks (groups of changes with context)
 	type hunk struct {
@@ -764,12 +764,12 @@ func generateUnifiedDiff(oldLines, newLines []string, filename string, contextLi
 		}
 
 		// Write hunk header
-		buf.WriteString(fmt.Sprintf("@@ -%d,%d +%d,%d @@\n", oldStart, oldCount, newStart, newCount))
+		fmt.Fprintf(&buf, "@@ -%d,%d +%d,%d @@\n", oldStart, oldCount, newStart, newCount)
 
 		// Write hunk content
 		for idx := h.startIdx; idx <= h.endIdx; idx++ {
 			line := result[idx]
-			buf.WriteString(fmt.Sprintf("%c%s\n", line.change, line.text))
+			fmt.Fprintf(&buf, "%c%s\n", line.change, line.text)
 		}
 	}
 

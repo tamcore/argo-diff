@@ -510,27 +510,27 @@ WantedBy=multi-user.target
 require (
     // ArgoCD
     github.com/argoproj/argo-cd/v3 v3.x.x
-    
+
     // YAML
     gopkg.in/yaml.v3 v3.0.1
-    
+
     // Git (if needed for local operations)
     github.com/go-git/go-git/v5 v5.11.0
-    
+
     // Diff
     github.com/sergi/go-diff v1.3.1
-    
+
     // GitHub
     github.com/google/go-github/v58 v58.0.0
     golang.org/x/oauth2 v0.15.0
-    
+
     // OIDC/JWT
     github.com/golang-jwt/jwt/v5 v5.2.0
     github.com/lestrrat-go/jwx/v2 v2.0.21
-    
+
     // Prometheus
     github.com/prometheus/client_golang v1.18.0
-    
+
     // HTTP
     github.com/gorilla/mux v1.8.1 (or stdlib)
 )
