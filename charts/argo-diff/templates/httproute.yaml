@@ -7,13 +7,25 @@ metadata:
     {{- include "argo-diff.labels" . | nindent 4 }}
 spec:
   parentRefs:
-    {{- toYaml .Values.httpRoute.parentRefs | nindent 4 }}
+    {{- range .Values.httpRoute.parentRefs }}
+    - name: {{ .name }}
+      namespace: {{ .namespace }}
+      group: {{ .group | default "gateway.networking.k8s.io" }}
+      kind: {{ .kind | default "Gateway" }}
+    {{- end }}
   {{- if .Values.httpRoute.hostnames }}
   hostnames:
     {{- toYaml .Values.httpRoute.hostnames | nindent 4 }}
   {{- end }}
   rules:
-    - backendRefs:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
         - name: {{ include "argo-diff.fullname" . }}
+          group: ""
+          kind: Service
           port: {{ .Values.service.port }}
+          weight: 1
 {{- end }}
