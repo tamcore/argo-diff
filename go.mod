@@ -3,7 +3,7 @@ module github.com/tamcore/argo-diff
 go 1.26.0
 
 require (
-	github.com/argoproj/argo-cd/v3 v3.2.6
+	github.com/argoproj/argo-cd/v3 v3.4.3
 	github.com/google/go-github/v68 v68.0.0
 	github.com/google/uuid v1.6.1-0.20241114170450-2d3c2a9cc518
 	github.com/lestrrat-go/jwx/v2 v2.1.6
