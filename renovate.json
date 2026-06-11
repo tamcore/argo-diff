@@ -1,0 +1,30 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "description": "argo-cd and its transitive k8s deps must be upgraded together; skip individual bumps until the argo-cd gitops-engine resolves its k8s API compatibility",
+      "matchPackageNames": [
+        "github.com/argoproj/argo-cd/v3",
+        "k8s.io/apimachinery",
+        "k8s.io/api",
+        "k8s.io/client-go",
+        "k8s.io/apiextensions-apiserver",
+        "k8s.io/apiserver",
+        "k8s.io/cli-runtime",
+        "k8s.io/component-base",
+        "k8s.io/component-helpers",
+        "k8s.io/controller-manager",
+        "k8s.io/kube-aggregator",
+        "k8s.io/kubectl",
+        "k8s.io/kubernetes"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "google/uuid is pinned to a pre-release by argo-cd; skip until argo-cd is upgraded",
+      "matchPackageNames": ["github.com/google/uuid"],
+      "enabled": false
+    }
+  ]
+}
