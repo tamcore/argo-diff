@@ -65,6 +65,54 @@ func TestLoad(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "invalid integer value",
+			envVars: map[string]string{
+				"REPO_ALLOWLIST": "owner/repo",
+				"WORKER_COUNT":   "five",
+			},
+			wantErr: true,
+		},
+		{
+			name: "zero worker count",
+			envVars: map[string]string{
+				"REPO_ALLOWLIST": "owner/repo",
+				"WORKER_COUNT":   "0",
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative queue size",
+			envVars: map[string]string{
+				"REPO_ALLOWLIST": "owner/repo",
+				"QUEUE_SIZE":     "-1",
+			},
+			wantErr: true,
+		},
+		{
+			name: "port out of range",
+			envVars: map[string]string{
+				"REPO_ALLOWLIST": "owner/repo",
+				"PORT":           "70000",
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid boolean value",
+			envVars: map[string]string{
+				"REPO_ALLOWLIST":   "owner/repo",
+				"ARGOCD_PLAINTEXT": "yes please",
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative rate limit",
+			envVars: map[string]string{
+				"REPO_ALLOWLIST":      "owner/repo",
+				"RATE_LIMIT_PER_REPO": "-5",
+			},
+			wantErr: true,
+		},
+		{
 			name: "empty allowlist",
 			envVars: map[string]string{
 				"REPO_ALLOWLIST": "   ",
@@ -81,6 +129,8 @@ func TestLoad(t *testing.T) {
 			_ = os.Unsetenv("WORKER_COUNT")
 			_ = os.Unsetenv("QUEUE_SIZE")
 			_ = os.Unsetenv("REPO_ALLOWLIST")
+			_ = os.Unsetenv("RATE_LIMIT_PER_REPO")
+			_ = os.Unsetenv("ARGOCD_PLAINTEXT")
 
 			for key, value := range tt.envVars {
 				_ = os.Setenv(key, value)

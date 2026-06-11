@@ -33,15 +33,44 @@ type Config struct {
 
 // Load reads configuration from environment variables
 func Load() (*Config, error) {
+	port, err := getEnvInt("PORT", 8080)
+	if err != nil {
+		return nil, err
+	}
+	metricsPort, err := getEnvInt("METRICS_PORT", 9090)
+	if err != nil {
+		return nil, err
+	}
+	workerCount, err := getEnvInt("WORKER_COUNT", 1)
+	if err != nil {
+		return nil, err
+	}
+	queueSize, err := getEnvInt("QUEUE_SIZE", 100)
+	if err != nil {
+		return nil, err
+	}
+	rateLimitPerRepo, err := getEnvInt("RATE_LIMIT_PER_REPO", 10) // 10 requests/min default
+	if err != nil {
+		return nil, err
+	}
+	argocdPlainText, err := getEnvBool("ARGOCD_PLAINTEXT", true)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
-		Port:             getEnvInt("PORT", 8080),
-		MetricsPort:      getEnvInt("METRICS_PORT", 9090),
-		WorkerCount:      getEnvInt("WORKER_COUNT", 1),
-		QueueSize:        getEnvInt("QUEUE_SIZE", 100),
+		Port:             port,
+		MetricsPort:      metricsPort,
+		WorkerCount:      workerCount,
+		QueueSize:        queueSize,
 		LogLevel:         getEnvString("LOG_LEVEL", "info"),
-		RateLimitPerRepo: getEnvInt("RATE_LIMIT_PER_REPO", 10), // 10 requests/min default
+		RateLimitPerRepo: rateLimitPerRepo,
 		ArgocdServer:     getEnvString("ARGOCD_SERVER", "argocd-server:80"),
-		ArgocdPlainText:  getEnvBool("ARGOCD_PLAINTEXT", true),
+		ArgocdPlainText:  argocdPlainText,
+	}
+
+	if err := validate(cfg); err != nil {
+		return nil, err
 	}
 
 	// Parse repository allowlist (required)
@@ -61,6 +90,26 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// validate checks that numeric configuration values are within sane ranges
+func validate(cfg *Config) error {
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		return fmt.Errorf("PORT must be between 1 and 65535, got %d", cfg.Port)
+	}
+	if cfg.MetricsPort < 1 || cfg.MetricsPort > 65535 {
+		return fmt.Errorf("METRICS_PORT must be between 1 and 65535, got %d", cfg.MetricsPort)
+	}
+	if cfg.WorkerCount < 1 {
+		return fmt.Errorf("WORKER_COUNT must be at least 1, got %d", cfg.WorkerCount)
+	}
+	if cfg.QueueSize < 1 {
+		return fmt.Errorf("QUEUE_SIZE must be at least 1, got %d", cfg.QueueSize)
+	}
+	if cfg.RateLimitPerRepo < 0 {
+		return fmt.Errorf("RATE_LIMIT_PER_REPO must not be negative, got %d", cfg.RateLimitPerRepo)
+	}
+	return nil
 }
 
 // IsRepoAllowed checks if a repository matches the allowlist
@@ -116,19 +165,20 @@ func parseAllowlist(allowlistStr string) []string {
 	return result
 }
 
-// getEnvInt reads an integer from environment variable with a default value
-func getEnvInt(key string, defaultValue int) int {
+// getEnvInt reads an integer from environment variable with a default value.
+// Returns an error if the variable is set but not a valid integer.
+func getEnvInt(key string, defaultValue int) (int, error) {
 	valueStr := os.Getenv(key)
 	if valueStr == "" {
-		return defaultValue
+		return defaultValue, nil
 	}
 
 	value, err := strconv.Atoi(valueStr)
 	if err != nil {
-		return defaultValue
+		return 0, fmt.Errorf("%s must be an integer, got %q", key, valueStr)
 	}
 
-	return value
+	return value, nil
 }
 
 // getEnvString reads a string from environment variable with a default value
@@ -140,17 +190,18 @@ func getEnvString(key string, defaultValue string) string {
 	return value
 }
 
-// getEnvBool reads a boolean from environment variable with a default value
-func getEnvBool(key string, defaultValue bool) bool {
+// getEnvBool reads a boolean from environment variable with a default value.
+// Returns an error if the variable is set but not a valid boolean.
+func getEnvBool(key string, defaultValue bool) (bool, error) {
 	valueStr := os.Getenv(key)
 	if valueStr == "" {
-		return defaultValue
+		return defaultValue, nil
 	}
 
 	value, err := strconv.ParseBool(valueStr)
 	if err != nil {
-		return defaultValue
+		return false, fmt.Errorf("%s must be a boolean, got %q", key, valueStr)
 	}
 
-	return value
+	return value, nil
 }

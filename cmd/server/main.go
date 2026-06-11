@@ -69,9 +69,15 @@ func main() {
 		"argocd_plaintext", cfg.ArgocdPlainText,
 	)
 
+	oidcValidator, err := auth.NewOIDCValidator(context.Background())
+	if err != nil {
+		logging.Error("Failed to create OIDC validator", "error", err)
+		os.Exit(1)
+	}
+
 	srv := &Server{
 		cfg:  cfg,
-		oidc: auth.NewOIDCValidator(),
+		oidc: oidcValidator,
 	}
 
 	// Create rate limiter if enabled
@@ -185,6 +191,8 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+
 	var payload WebhookPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		log.Warn("Invalid JSON payload", "error", err)
@@ -195,6 +203,18 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if err := validatePayload(&payload); err != nil {
 		log.Warn("Invalid payload", "error", err)
 		http.Error(w, fmt.Sprintf("Invalid payload: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// The repository in the payload must match the repository the OIDC token
+	// was issued for. Otherwise any allowlisted repository could submit jobs
+	// on behalf of other repositories, bypassing per-repository rate limits.
+	if !strings.EqualFold(payload.Repository, repo) {
+		log.Warn("Payload repository does not match token repository",
+			"payload_repository", payload.Repository,
+			"token_repository", repo,
+		)
+		http.Error(w, "Payload repository does not match authenticated repository", http.StatusForbidden)
 		return
 	}
 
@@ -495,6 +515,7 @@ const (
 	maxWorkflowNameLength = 128
 	maxChangedFiles       = 1000
 	maxFilePathLength     = 512
+	maxRequestBodySize    = 1 << 20 // 1 MiB
 )
 
 func validatePayload(p *WebhookPayload) error {

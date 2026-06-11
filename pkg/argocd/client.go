@@ -28,7 +28,11 @@ func NewClient(ctx context.Context, server, token string, plainText bool) (*Clie
 		GRPCWeb:    true,
 	}
 
-	clientset := apiclient.NewClientOrDie(&opts)
+	clientset, err := apiclient.NewClient(&opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ArgoCD client: %w", err)
+	}
+
 	conn, appClient, err := clientset.NewApplicationClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ArgoCD application client: %w", err)
