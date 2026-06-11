@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lestrrat-go/jwx/v2/jwk"
-	"github.com/lestrrat-go/jwx/v2/jwt"
+	"github.com/jwx-go/jwkfetch/v4"
+	"github.com/lestrrat-go/httprc/v3"
+	"github.com/lestrrat-go/jwx/v4/jwt"
 )
 
 const (
@@ -20,14 +21,19 @@ const (
 
 type OIDCValidator struct {
 	jwksURL string
-	cache   *jwk.Cache
+	cache   *jwkfetch.Cache
 }
 
 // NewOIDCValidator creates a validator with a background-refreshing JWKS cache.
 // The provided context controls the lifetime of the cache refresh loop.
 func NewOIDCValidator(ctx context.Context) (*OIDCValidator, error) {
-	cache := jwk.NewCache(ctx)
-	if err := cache.Register(GitHubJWKSURL, jwk.WithMinRefreshInterval(jwksMinRefreshInterval)); err != nil {
+	httprcClient := httprc.NewClient()
+	cache, err := jwkfetch.NewCache(ctx, httprcClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JWKS cache: %w", err)
+	}
+
+	if err := cache.Register(ctx, GitHubJWKSURL, jwkfetch.WithMinInterval(jwksMinRefreshInterval)); err != nil {
 		return nil, fmt.Errorf("failed to register JWKS URL: %w", err)
 	}
 
@@ -38,7 +44,7 @@ func NewOIDCValidator(ctx context.Context) (*OIDCValidator, error) {
 }
 
 func (v *OIDCValidator) ValidateToken(ctx context.Context, tokenString string) (string, error) {
-	keySet, err := v.cache.Get(ctx, v.jwksURL)
+	keySet, err := v.cache.Fetch(ctx, v.jwksURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch JWKS: %w", err)
 	}
@@ -53,13 +59,11 @@ func (v *OIDCValidator) ValidateToken(ctx context.Context, tokenString string) (
 		return "", fmt.Errorf("failed to parse/validate token: %w", err)
 	}
 
-	repoClaim, ok := token.Get("repository")
-	if !ok {
-		return "", fmt.Errorf("token missing 'repository' claim")
+	repo, err := jwt.Get[string](token, "repository")
+	if err != nil {
+		return "", fmt.Errorf("token missing or invalid 'repository' claim: %w", err)
 	}
-
-	repo, ok := repoClaim.(string)
-	if !ok || repo == "" {
+	if repo == "" {
 		return "", fmt.Errorf("invalid 'repository' claim format")
 	}
 
