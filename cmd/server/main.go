@@ -22,6 +22,7 @@ import (
 	"github.com/tamcore/argo-diff/pkg/matcher"
 	"github.com/tamcore/argo-diff/pkg/metrics"
 	"github.com/tamcore/argo-diff/pkg/ratelimit"
+	"github.com/tamcore/argo-diff/pkg/sanitize"
 	"github.com/tamcore/argo-diff/pkg/worker"
 )
 
@@ -103,11 +104,14 @@ func main() {
 		Addr:    fmt.Sprintf(":%d", cfg.MetricsPort),
 		Handler: metricsMux,
 	}
+	// Fatal server errors are funneled through a channel so the shutdown
+	// path below always runs (os.Exit in a goroutine would skip it).
+	serverErr := make(chan error, 2)
+
 	go func() {
 		logging.Info("Metrics server started", "port", cfg.MetricsPort)
 		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logging.Error("Metrics server error", "error", err)
-			os.Exit(1)
+			serverErr <- fmt.Errorf("metrics server: %w", err)
 		}
 	}()
 
@@ -121,16 +125,21 @@ func main() {
 	go func() {
 		logging.Info("HTTP server started", "port", cfg.Port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logging.Error("HTTP server error", "error", err)
-			os.Exit(1)
+			serverErr <- fmt.Errorf("http server: %w", err)
 		}
 	}()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
 
-	logging.Info("Shutting down gracefully...")
+	exitCode := 0
+	select {
+	case <-sigChan:
+		logging.Info("Shutting down gracefully...")
+	case err := <-serverErr:
+		logging.Error("Server error, shutting down", "error", err)
+		exitCode = 1
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -151,6 +160,7 @@ func main() {
 	}
 
 	logging.Info("Shutdown complete")
+	os.Exit(exitCode)
 }
 
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -374,9 +384,10 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 	// Create GitHub client
 	ghClient := github.NewClient(ctx, job.GitHubToken, owner, repo)
 
-	// Helper to post errors
+	// Helper to post errors. Error text ends up in a public PR comment, so
+	// redact anything that looks like a credential.
 	postError := func(msg string) {
-		errorMsg := fmt.Sprintf("## ❌ Error\n\n%s", msg)
+		errorMsg := fmt.Sprintf("## ❌ Error\n\n%s", sanitize.String(msg))
 		_ = ghClient.PostComment(ctx, job.PRNumber, errorMsg, job.WorkflowName, 0)
 	}
 
@@ -440,7 +451,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 				metrics.RecordApplicationProcessed(job.Repository, appName, "error")
 				diffResults = append(diffResults, &diff.DiffResult{
 					AppInfo:      appInfo,
-					ErrorMessage: fmt.Sprintf("Failed to get base manifests: %v", err),
+					ErrorMessage: fmt.Sprintf("Failed to get base manifests: %v", sanitize.Error(err)),
 				})
 				continue
 			}
@@ -451,7 +462,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 				metrics.RecordApplicationProcessed(job.Repository, appName, "error")
 				diffResults = append(diffResults, &diff.DiffResult{
 					AppInfo:      appInfo,
-					ErrorMessage: fmt.Sprintf("Failed to get head manifests: %v", err),
+					ErrorMessage: fmt.Sprintf("Failed to get head manifests: %v", sanitize.Error(err)),
 				})
 				continue
 			}
@@ -463,7 +474,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 				metrics.RecordApplicationProcessed(job.Repository, appName, "error")
 				diffResults = append(diffResults, &diff.DiffResult{
 					AppInfo:      appInfo,
-					ErrorMessage: fmt.Sprintf("Failed to get base manifests: %v", err),
+					ErrorMessage: fmt.Sprintf("Failed to get base manifests: %v", sanitize.Error(err)),
 				})
 				continue
 			}
@@ -474,7 +485,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 				metrics.RecordApplicationProcessed(job.Repository, appName, "error")
 				diffResults = append(diffResults, &diff.DiffResult{
 					AppInfo:      appInfo,
-					ErrorMessage: fmt.Sprintf("Failed to get head manifests: %v", err),
+					ErrorMessage: fmt.Sprintf("Failed to get head manifests: %v", sanitize.Error(err)),
 				})
 				continue
 			}
@@ -491,7 +502,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 			metrics.RecordApplicationProcessed(job.Repository, appName, "error")
 			diffResults = append(diffResults, &diff.DiffResult{
 				AppInfo:      appInfo,
-				ErrorMessage: fmt.Sprintf("Failed to generate diff: %v", err),
+				ErrorMessage: fmt.Sprintf("Failed to generate diff: %v", sanitize.Error(err)),
 			})
 			continue
 		}
@@ -574,7 +585,26 @@ func validatePayload(p *WebhookPayload) error {
 	if len(p.WorkflowName) > maxWorkflowNameLength {
 		return fmt.Errorf("workflow_name exceeds maximum length of %d", maxWorkflowNameLength)
 	}
+	if !isValidWorkflowName(p.WorkflowName) {
+		return fmt.Errorf("workflow_name may only contain alphanumerics, spaces, dots, dashes and underscores")
+	}
 	return nil
+}
+
+// isValidWorkflowName restricts workflow names to a safe character set.
+// The name is embedded in an HTML comment used to identify and delete this
+// workflow's previous PR comments, so characters like '<', '>' or newlines
+// could break or spoof that identifier.
+func isValidWorkflowName(name string) bool {
+	for _, c := range name {
+		isAlpha := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+		isDigit := c >= '0' && c <= '9'
+		isSpecial := c == ' ' || c == '.' || c == '-' || c == '_'
+		if !isAlpha && !isDigit && !isSpecial {
+			return false
+		}
+	}
+	return true
 }
 
 func isValidRepository(repo string) bool {
