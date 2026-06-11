@@ -14,7 +14,9 @@ import (
 type Pool struct {
 	jobQueue    chan Job
 	workerCount int
-	done        chan struct{}
+	jobTimeout  time.Duration
+	mu          sync.RWMutex
+	closeOnce   sync.Once
 	wg          sync.WaitGroup
 	processor   JobProcessor
 	draining    atomic.Bool
@@ -24,12 +26,14 @@ type Pool struct {
 // JobProcessor is a function that processes a job
 type JobProcessor func(ctx context.Context, job Job) error
 
-// NewPool creates a new worker pool
-func NewPool(workerCount, queueSize int, processor JobProcessor) *Pool {
+// NewPool creates a new worker pool. Each job is processed with a context
+// that times out after jobTimeout, so a hung downstream call cannot block
+// a worker forever.
+func NewPool(workerCount, queueSize int, jobTimeout time.Duration, processor JobProcessor) *Pool {
 	return &Pool{
 		jobQueue:    make(chan Job, queueSize),
 		workerCount: workerCount,
-		done:        make(chan struct{}),
+		jobTimeout:  jobTimeout,
 		processor:   processor,
 	}
 }
@@ -46,6 +50,9 @@ func (p *Pool) Start() {
 // Submit adds a job to the queue
 // Returns false if the pool is draining or queue is full
 func (p *Pool) Submit(job Job) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	if p.draining.Load() {
 		return false
 	}
@@ -59,10 +66,19 @@ func (p *Pool) Submit(job Job) bool {
 	}
 }
 
-// Stop gracefully stops the pool, waiting for in-progress jobs
+// Stop gracefully stops the pool. It stops accepting new jobs, lets the
+// workers drain all already-accepted (queued) jobs, and waits up to timeout
+// for them to finish.
 func (p *Pool) Stop(timeout time.Duration) {
 	p.draining.Store(true)
-	close(p.done)
+
+	// Close the queue under the write lock so no Submit can race a send
+	// against the close.
+	p.closeOnce.Do(func() {
+		p.mu.Lock()
+		close(p.jobQueue)
+		p.mu.Unlock()
+	})
 
 	// Wait for workers with timeout
 	done := make(chan struct{})
@@ -111,39 +127,32 @@ func (p *Pool) worker(id int) {
 	workerLog.Info("Worker started")
 	defer workerLog.Info("Worker stopped")
 
-	for {
-		select {
-		case <-p.done:
-			return
-		case job, ok := <-p.jobQueue:
-			if !ok {
-				return
-			}
+	for job := range p.jobQueue {
+		metrics.JobsInQueue.Dec()
+		p.activeJobs.Add(1)
 
-			metrics.JobsInQueue.Dec()
-			p.activeJobs.Add(1)
+		jobLog := logging.WithFields(
+			"worker_id", id,
+			"repository", job.Repository,
+			"pr_number", job.PRNumber,
+		)
+		jobLog.Info("Processing job")
 
-			jobLog := logging.WithFields(
-				"worker_id", id,
-				"repository", job.Repository,
-				"pr_number", job.PRNumber,
-			)
-			jobLog.Info("Processing job")
+		startTime := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), p.jobTimeout)
+		err := p.processor(ctx, job)
+		cancel()
+		duration := time.Since(startTime).Seconds()
 
-			startTime := time.Now()
-			err := p.processor(context.Background(), job)
-			duration := time.Since(startTime).Seconds()
+		p.activeJobs.Add(-1)
+		metrics.ProcessingDuration.WithLabelValues(job.Repository).Observe(duration)
 
-			p.activeJobs.Add(-1)
-			metrics.ProcessingDuration.WithLabelValues(job.Repository).Observe(duration)
-
-			if err != nil {
-				metrics.RecordJobFailure(job.Repository)
-				jobLog.Error("Job failed", "error", err, "duration_seconds", duration)
-			} else {
-				metrics.RecordJobSuccess(job.Repository)
-				jobLog.Info("Job completed", "duration_seconds", duration)
-			}
+		if err != nil {
+			metrics.RecordJobFailure(job.Repository)
+			jobLog.Error("Job failed", "error", err, "duration_seconds", duration)
+		} else {
+			metrics.RecordJobSuccess(job.Repository)
+			jobLog.Info("Job completed", "duration_seconds", duration)
 		}
 	}
 }

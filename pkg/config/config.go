@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds the application configuration
@@ -25,6 +26,9 @@ type Config struct {
 
 	// Rate limiting configuration
 	RateLimitPerRepo int // requests per minute per repository (0 = disabled)
+
+	// Job processing configuration
+	JobTimeout time.Duration // maximum duration for a single diff job
 
 	// ArgoCD configuration
 	ArgocdServer    string
@@ -57,6 +61,10 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	jobTimeout, err := getEnvDuration("JOB_TIMEOUT", 10*time.Minute)
+	if err != nil {
+		return nil, err
+	}
 
 	cfg := &Config{
 		Port:             port,
@@ -65,6 +73,7 @@ func Load() (*Config, error) {
 		QueueSize:        queueSize,
 		LogLevel:         getEnvString("LOG_LEVEL", "info"),
 		RateLimitPerRepo: rateLimitPerRepo,
+		JobTimeout:       jobTimeout,
 		ArgocdServer:     getEnvString("ARGOCD_SERVER", "argocd-server:80"),
 		ArgocdPlainText:  argocdPlainText,
 	}
@@ -108,6 +117,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.RateLimitPerRepo < 0 {
 		return fmt.Errorf("RATE_LIMIT_PER_REPO must not be negative, got %d", cfg.RateLimitPerRepo)
+	}
+	if cfg.JobTimeout <= 0 {
+		return fmt.Errorf("JOB_TIMEOUT must be positive, got %s", cfg.JobTimeout)
 	}
 	return nil
 }
@@ -176,6 +188,23 @@ func getEnvInt(key string, defaultValue int) (int, error) {
 	value, err := strconv.Atoi(valueStr)
 	if err != nil {
 		return 0, fmt.Errorf("%s must be an integer, got %q", key, valueStr)
+	}
+
+	return value, nil
+}
+
+// getEnvDuration reads a duration (e.g. "10m", "90s") from environment
+// variable with a default value. Returns an error if the variable is set but
+// not a valid duration.
+func getEnvDuration(key string, defaultValue time.Duration) (time.Duration, error) {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue, nil
+	}
+
+	value, err := time.ParseDuration(valueStr)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a duration (e.g. \"10m\"), got %q", key, valueStr)
 	}
 
 	return value, nil

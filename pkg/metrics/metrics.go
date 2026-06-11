@@ -177,7 +177,10 @@ func RecordApplicationsAffected(repository string, count int) {
 	ApplicationsAffected.WithLabelValues(repository).Observe(float64(count))
 }
 
-// RecordResourceChange records a resource change detected in a diff
-func RecordResourceChange(repository, application, changeType string) {
-	DiffResourceChanges.WithLabelValues(repository, application, changeType).Inc()
+// RecordResourceChanges records resource changes detected in a diff
+func RecordResourceChanges(repository, application, changeType string, count int) {
+	if count <= 0 {
+		return
+	}
+	DiffResourceChanges.WithLabelValues(repository, application, changeType).Add(float64(count))
 }
