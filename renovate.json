@@ -25,6 +25,12 @@
       "description": "google/uuid is pinned to a pre-release by argo-cd; skip until argo-cd is upgraded",
       "matchPackageNames": ["github.com/google/uuid"],
       "enabled": false
+    },
+    {
+      "description": "jwx v4 requires GOEXPERIMENT=jsonv2 (encoding/json/v2 is experimental in Go 1.26); skip until jsonv2 is stable",
+      "matchPackageNames": ["github.com/lestrrat-go/jwx"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
     }
   ]
 }
