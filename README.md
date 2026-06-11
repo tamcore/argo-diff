@@ -36,12 +36,16 @@ All configuration is via environment variables:
 |----------|-------------|---------|
 | `PORT` | HTTP server port | `8080` |
 | `METRICS_PORT` | Metrics server port | `9090` |
-| `WORKER_COUNT` | Number of worker goroutines | `5` |
+| `WORKER_COUNT` | Number of worker goroutines | `1` |
 | `QUEUE_SIZE` | Job queue buffer size | `100` |
-| `REPO_ALLOWLIST` | Comma-separated list of allowed repos | *(required)* |
-| `GITHUB_OIDC_ISSUER` | GitHub OIDC issuer URL | `https://token.actions.githubusercontent.com` |
+| `JOB_TIMEOUT` | Maximum duration for a single diff job (Go duration, e.g. `10m`) | `10m` |
+| `REPO_ALLOWLIST` | Comma-separated list of allowed repos (supports `owner/*` wildcards) | *(required)* |
+| `RATE_LIMIT_PER_REPO` | Webhook requests per minute per repository (`0` = disabled) | `10` |
+| `LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) | `info` |
 | `ARGOCD_SERVER` | ArgoCD server address | `argocd-server:80` |
-| `ARGOCD_INSECURE` | Skip TLS verification | `true` |
+| `ARGOCD_PLAINTEXT` | Use plaintext (non-TLS) gRPC connection to ArgoCD | `true` |
+
+The GitHub OIDC issuer is fixed to `https://token.actions.githubusercontent.com`.
 
 ## API
 
