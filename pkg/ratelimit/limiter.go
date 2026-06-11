@@ -60,23 +60,6 @@ func (l *Limiter) Allow(key string) bool {
 	return true
 }
 
-// Remaining returns the number of requests remaining for a key
-func (l *Limiter) Remaining(key string) int {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-
-	b, exists := l.limits[key]
-	if !exists || time.Now().After(b.resetAt) {
-		return l.rate
-	}
-
-	remaining := l.rate - b.count
-	if remaining < 0 {
-		return 0
-	}
-	return remaining
-}
-
 // Stop stops the rate limiter cleanup goroutine
 func (l *Limiter) Stop() {
 	close(l.done)

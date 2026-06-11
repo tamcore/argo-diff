@@ -79,54 +79,6 @@ func TestLimiterWindowExpiry(t *testing.T) {
 	}
 }
 
-func TestLimiterRemaining(t *testing.T) {
-	l := NewLimiter(5, time.Second)
-	defer l.Stop()
-
-	key := "test-repo"
-
-	// Initially should have all requests remaining
-	if r := l.Remaining(key); r != 5 {
-		t.Errorf("expected 5 remaining, got %d", r)
-	}
-
-	// Use 2 requests
-	l.Allow(key)
-	l.Allow(key)
-
-	if r := l.Remaining(key); r != 3 {
-		t.Errorf("expected 3 remaining, got %d", r)
-	}
-
-	// Use remaining
-	l.Allow(key)
-	l.Allow(key)
-	l.Allow(key)
-
-	if r := l.Remaining(key); r != 0 {
-		t.Errorf("expected 0 remaining, got %d", r)
-	}
-}
-
-func TestLimiterRemainingAfterExpiry(t *testing.T) {
-	l := NewLimiter(5, 50*time.Millisecond)
-	defer l.Stop()
-
-	key := "test-repo"
-
-	// Use some requests
-	l.Allow(key)
-	l.Allow(key)
-
-	// Wait for expiry
-	time.Sleep(60 * time.Millisecond)
-
-	// Should report full capacity
-	if r := l.Remaining(key); r != 5 {
-		t.Errorf("expected 5 remaining after expiry, got %d", r)
-	}
-}
-
 func TestLimiterConcurrentAccess(t *testing.T) {
 	l := NewLimiter(100, time.Second)
 	defer l.Stop()
@@ -202,21 +154,4 @@ func TestLimiterStop(t *testing.T) {
 
 	// Multiple stops should not panic
 	// (channel already closed, but this tests the pattern)
-}
-
-func TestLimiterZeroRemaining(t *testing.T) {
-	l := NewLimiter(1, time.Second)
-	defer l.Stop()
-
-	key := "test"
-	l.Allow(key)
-
-	// Try to get more than rate
-	l.Allow(key)
-	l.Allow(key)
-
-	// Remaining should be 0, not negative
-	if r := l.Remaining(key); r != 0 {
-		t.Errorf("expected 0 remaining, got %d", r)
-	}
 }

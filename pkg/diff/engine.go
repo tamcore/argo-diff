@@ -138,16 +138,6 @@ func GenerateDiffWithOptions(baseManifests, headManifests []string, appInfo *App
 	return result, nil
 }
 
-// GenerateDiffLegacy generates a formatted diff between base and head manifests (legacy format)
-func GenerateDiffLegacy(baseManifests, headManifests []string, appName string) (string, error) {
-	appInfo := &AppInfo{Name: appName}
-	result, err := GenerateDiff(baseManifests, headManifests, appInfo)
-	if err != nil {
-		return "", err
-	}
-	return FormatAppDiff(result), nil
-}
-
 // FormatAppDiff formats a single application's diff result as markdown
 func FormatAppDiff(result *DiffResult) string {
 	if result.ErrorMessage != "" {
@@ -298,7 +288,10 @@ func parseManifests(manifests []string) ([]*Resource, error) {
 			// Convert JSON to YAML for better diff readability
 			yamlManifest, err := jsonToYAML(manifest)
 			if err != nil {
-				continue // Skip if conversion fails
+				// Skip if conversion fails, but don't do so silently:
+				// a skipped manifest means a resource missing from the diff
+				logging.Warn("Skipping manifest that failed JSON to YAML conversion", "error", err)
+				continue
 			}
 			manifest = yamlManifest
 		}
@@ -313,7 +306,10 @@ func parseManifests(manifests []string) ([]*Resource, error) {
 
 			var r Resource
 			if err := yaml.Unmarshal([]byte(doc), &r); err != nil {
-				continue // Skip invalid YAML
+				// Skip invalid YAML, but surface it: a skipped document
+				// means a resource missing from the diff
+				logging.Warn("Skipping document that failed YAML parsing", "error", err)
+				continue
 			}
 
 			// Skip empty resources
