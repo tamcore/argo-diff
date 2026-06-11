@@ -14,6 +14,6 @@ jobs:
       statuses: read
     steps:
       - name: Run Merge Gatekeeper
-        uses: tamcore/pr-merge-gatekeeper@30046598ce024835e0f8178ef027577aaf67cb85 # v1
+        uses: tamcore/pr-merge-gatekeeper@5233d531797d71eabd59c9138739a652c5437a93 # v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
