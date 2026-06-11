@@ -382,7 +382,10 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 	owner, repo := parts[0], parts[1]
 
 	// Create GitHub client
-	ghClient := github.NewClient(ctx, job.GitHubToken, owner, repo)
+	ghClient, err := github.NewClient(ctx, job.GitHubToken, owner, repo)
+	if err != nil {
+		return fmt.Errorf("create github client: %w", err)
+	}
 
 	// Helper to post errors. Error text ends up in a public PR comment, so
 	// redact anything that looks like a credential.

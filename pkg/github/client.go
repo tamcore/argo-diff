@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/google/go-github/v68/github"
+	"github.com/google/go-github/v88/github"
 	"github.com/tamcore/argo-diff/pkg/metrics"
 )
 
@@ -24,15 +24,17 @@ type Client struct {
 }
 
 // NewClient creates a new GitHub API client
-func NewClient(ctx context.Context, token, owner, repo string) *Client {
-	// Use go-github's built-in auth token method
-	client := github.NewClient(nil).WithAuthToken(token)
+func NewClient(ctx context.Context, token, owner, repo string) (*Client, error) {
+	client, err := github.NewClient(github.WithAuthToken(token))
+	if err != nil {
+		return nil, fmt.Errorf("create github client: %w", err)
+	}
 
 	return &Client{
 		client: client,
 		owner:  owner,
 		repo:   repo,
-	}
+	}, nil
 }
 
 // workflowIdentifier returns the comment identifier for a specific workflow
