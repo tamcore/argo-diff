@@ -29,10 +29,10 @@ func MatchApplications(apps []*appv1.Application, repo string, changedFiles []st
 // MatchApplicationsWithDetails returns applications affected by changed files with match details.
 // If destinationClusters is non-empty, only apps targeting one of those cluster names are included.
 func MatchApplicationsWithDetails(apps []*appv1.Application, repo string, changedFiles []string, destinationClusters []string) []*MatchResult {
-	slog.Info("Starting application matching",
+	slog.Debug("Starting application matching",
 		"repo", repo,
 		"normalizedRepo", normalizeRepoURL(repo),
-		"changedFiles", changedFiles,
+		"changedFiles", len(changedFiles),
 		"totalApps", len(apps),
 		"destinationClusters", destinationClusters)
 
@@ -48,7 +48,7 @@ func MatchApplicationsWithDetails(apps []*appv1.Application, repo string, change
 		}
 	}
 
-	slog.Info("Matching complete", "matchedApps", len(results))
+	slog.Debug("Matching complete", "matchedApps", len(results))
 	return results
 }
 
@@ -102,6 +102,12 @@ func matchApp(app *appv1.Application, repo string, changedFiles []string) *Match
 // - applications/<app_name>.yml
 // - applications/*/<app_name>.yaml
 // - apps/<app_name>.yaml
+//
+// Known limitation: this matches by filename only, regardless of which
+// repository the application's sources track (app-of-apps definitions may
+// live in a different repository than the app's sources). A file named
+// after an unrelated app in another allowlisted repository can therefore
+// trigger a spurious diff for that app.
 func isAppDefinitionFile(file, appName string) bool {
 	file = strings.TrimPrefix(file, "/")
 	base := filepath.Base(file)
@@ -150,7 +156,7 @@ func matchesSourceWithPaths(source *appv1.ApplicationSource, repo string, change
 	sourceRepo := normalizeRepoURL(source.RepoURL)
 	targetRepo := normalizeRepoURL(repo)
 
-	slog.Info("Comparing repos",
+	slog.Debug("Comparing repos",
 		"sourceRepoURL", source.RepoURL,
 		"sourceRepoNormalized", sourceRepo,
 		"targetRepo", repo,
@@ -197,7 +203,7 @@ func matchesSourceWithPaths(source *appv1.ApplicationSource, repo string, change
 
 // normalizeRepoURL normalizes a repository URL for comparison
 func normalizeRepoURL(url string) string {
-	url = strings.ToLower(url)
+	url = strings.ToLower(strings.TrimSpace(url))
 	url = strings.TrimSuffix(url, ".git")
 	url = strings.TrimSuffix(url, "/")
 	// Remove protocol prefixes first
@@ -206,7 +212,21 @@ func normalizeRepoURL(url string) string {
 	url = strings.TrimPrefix(url, "ssh://")
 	// Handle SSH format (git@github.com:user/repo)
 	url = strings.TrimPrefix(url, "git@")
-	url = strings.ReplaceAll(url, ":", "/")
+
+	// Separate host from path. The host part may be "host:port" or, for
+	// scp-like syntax, "host:path" - in both cases the colon belongs to the
+	// host segment and must not leak into the path comparison.
+	if colon := strings.Index(url, ":"); colon != -1 {
+		host, rest := url[:colon], url[colon+1:]
+		// Strip a numeric port (host:443/owner/repo); otherwise it's
+		// scp-like syntax where the colon separates host and path
+		if slash := strings.Index(rest, "/"); slash != -1 && isDigits(rest[:slash]) {
+			url = host + rest[slash:]
+		} else {
+			url = host + "/" + rest
+		}
+	}
+
 	// Handle short format (owner/repo) - assume github.com
 	if !strings.Contains(url, "/") || strings.Count(url, "/") == 1 {
 		// If it's just owner/repo without a host, don't add one
@@ -223,6 +243,19 @@ func normalizeRepoURL(url string) string {
 		return strings.Join(parts[1:], "/")
 	}
 	return url
+}
+
+// isDigits reports whether s is non-empty and consists only of ASCII digits
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // uniqueStrings returns a deduplicated slice of strings

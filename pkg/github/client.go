@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"regexp"
 	"strings"
 
@@ -22,7 +21,6 @@ type Client struct {
 	client *github.Client
 	owner  string
 	repo   string
-	token  string
 }
 
 // NewClient creates a new GitHub API client
@@ -30,36 +28,11 @@ func NewClient(ctx context.Context, token, owner, repo string) *Client {
 	// Use go-github's built-in auth token method
 	client := github.NewClient(nil).WithAuthToken(token)
 
-	slog.Info("Created GitHub client",
-		"owner", owner,
-		"repo", repo,
-		"token_length", len(token),
-	)
-
 	return &Client{
 		client: client,
 		owner:  owner,
 		repo:   repo,
-		token:  token,
 	}
-}
-
-// makeDirectRequest makes a direct HTTP request to the GitHub API for debugging
-func (c *Client) makeDirectRequest(ctx context.Context, url string) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Authorization", "token "+c.token)
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "argo-diff")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	return resp.StatusCode, nil
 }
 
 // workflowIdentifier returns the comment identifier for a specific workflow
@@ -116,115 +89,29 @@ func (c *Client) PostComment(ctx context.Context, prNumber int, body, workflowNa
 	return nil
 }
 
-// PostCommentLegacy posts or updates a comment on a pull request (legacy, single comment)
-func (c *Client) PostCommentLegacy(ctx context.Context, prNumber int, body string) error {
-	identifier := "<!-- argo-diff -->"
-	body = identifier + "\n\n" + body
-
-	// Truncate if too large
-	if len(body) > maxCommentSize {
-		body = body[:maxCommentSize-100] + "\n\n... (comment truncated due to size)"
-	}
-
-	// Find existing comment
-	comments, _, err := c.client.Issues.ListComments(ctx, c.owner, c.repo, prNumber, &github.IssueListCommentsOptions{
-		ListOptions: github.ListOptions{PerPage: 100},
-	})
-	if err != nil {
-		return fmt.Errorf("list comments: %w", err)
-	}
-
-	var existingComment *github.IssueComment
-	for _, comment := range comments {
-		if comment.Body != nil && strings.HasPrefix(*comment.Body, identifier) {
-			existingComment = comment
-			break
-		}
-	}
-
-	// Update or create comment
-	if existingComment != nil {
-		_, _, err = c.client.Issues.EditComment(ctx, c.owner, c.repo, *existingComment.ID, &github.IssueComment{
-			Body: &body,
-		})
-		if err != nil {
-			return fmt.Errorf("update comment: %w", err)
-		}
-	} else {
-		_, _, err = c.client.Issues.CreateComment(ctx, c.owner, c.repo, prNumber, &github.IssueComment{
-			Body: &body,
-		})
-		if err != nil {
-			return fmt.Errorf("create comment: %w", err)
-		}
-	}
-
-	return nil
-}
-
 // DeleteOldComments deletes old argo-diff comments from a pull request for a specific workflow
 func (c *Client) DeleteOldComments(ctx context.Context, prNumber int, workflowName string) error {
-	// Debug: verify token works with direct HTTP call before using go-github
-	testURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/comments?per_page=1",
-		c.owner, c.repo, prNumber)
-	statusCode, err := c.makeDirectRequest(ctx, testURL)
-	if err != nil {
-		slog.Error("Direct HTTP test failed in DeleteOldComments", "error", err)
-	} else {
-		slog.Info("Direct HTTP test in DeleteOldComments", "status_code", statusCode, "url", testURL)
-	}
-
 	opts := &github.IssueListCommentsOptions{
 		ListOptions: github.ListOptions{PerPage: 100},
 	}
-
-	identifier := workflowIdentifier(workflowName)
-	slog.Info("DeleteOldComments: looking for comments",
-		"pr", prNumber,
-		"workflow", workflowName,
-		"identifier", identifier,
-	)
 
 	for {
 		comments, resp, err := c.client.Issues.ListComments(ctx, c.owner, c.repo, prNumber, opts)
 		metrics.RecordGithubCall("list_comments", err)
 		if err != nil {
-			slog.Error("go-github ListComments failed",
-				"error", err,
-				"owner", c.owner,
-				"repo", c.repo,
-				"pr", prNumber,
-			)
 			return fmt.Errorf("list comments: %w", err)
 		}
 
-		slog.Info("DeleteOldComments: found comments", "count", len(comments), "page", opts.Page)
-
 		for _, comment := range comments {
-			if comment.Body == nil {
+			if comment.Body == nil || !isWorkflowComment(*comment.Body, workflowName) {
 				continue
 			}
-			// Log first 100 chars of each comment for debugging
-			preview := *comment.Body
-			if len(preview) > 100 {
-				preview = preview[:100]
-			}
-			isMatch := isWorkflowComment(*comment.Body, workflowName)
-			slog.Info("DeleteOldComments: checking comment",
-				"id", *comment.ID,
-				"matches", isMatch,
-				"preview", preview,
-			)
 
-			if isMatch {
-				slog.Info("DeleteOldComments: deleting comment", "id", *comment.ID)
-				_, err = c.client.Issues.DeleteComment(ctx, c.owner, c.repo, *comment.ID)
-				metrics.RecordGithubCall("delete_comment", err)
-				if err != nil {
-					slog.Error("DeleteOldComments: failed to delete", "id", *comment.ID, "error", err)
-					return fmt.Errorf("delete comment %d: %w", *comment.ID, err)
-				}
-				slog.Info("DeleteOldComments: successfully deleted comment", "id", *comment.ID)
+			slog.Debug("Deleting old workflow comment", "id", *comment.ID, "pr", prNumber)
+			_, err = c.client.Issues.DeleteComment(ctx, c.owner, c.repo, *comment.ID)
+			metrics.RecordGithubCall("delete_comment", err)
+			if err != nil {
+				return fmt.Errorf("delete comment %d: %w", *comment.ID, err)
 			}
 		}
 
@@ -343,39 +230,4 @@ func truncateSection(s string, maxSize int) string {
 	}
 
 	return truncated + suffix
-}
-
-// GetPullRequest retrieves pull request details
-func (c *Client) GetPullRequest(ctx context.Context, prNumber int) (*github.PullRequest, error) {
-	pr, _, err := c.client.PullRequests.Get(ctx, c.owner, c.repo, prNumber)
-	if err != nil {
-		return nil, fmt.Errorf("get pull request: %w", err)
-	}
-	return pr, nil
-}
-
-// GetChangedFiles retrieves the list of changed files in a pull request
-func (c *Client) GetChangedFiles(ctx context.Context, prNumber int) ([]string, error) {
-	var allFiles []string
-	opts := &github.ListOptions{PerPage: 100}
-
-	for {
-		files, resp, err := c.client.PullRequests.ListFiles(ctx, c.owner, c.repo, prNumber, opts)
-		if err != nil {
-			return nil, fmt.Errorf("list files: %w", err)
-		}
-
-		for _, file := range files {
-			if file.Filename != nil {
-				allFiles = append(allFiles, *file.Filename)
-			}
-		}
-
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-
-	return allFiles, nil
 }

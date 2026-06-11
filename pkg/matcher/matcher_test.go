@@ -233,6 +233,14 @@ func TestNormalizeRepoURL(t *testing.T) {
 			input: "User/Repo",
 			want:  "user/repo",
 		},
+		{
+			input: "https://github.example.com:8443/user/repo.git",
+			want:  "user/repo",
+		},
+		{
+			input: "ssh://git@github.example.com:2222/user/repo.git",
+			want:  "user/repo",
+		},
 	}
 
 	for _, tt := range tests {

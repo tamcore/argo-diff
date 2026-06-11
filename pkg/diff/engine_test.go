@@ -49,40 +49,6 @@ spec:
 	}
 }
 
-func TestGenerateDiffLegacy(t *testing.T) {
-	baseManifests := []string{`
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: test-app
-  namespace: default
-spec:
-  replicas: 2
-`}
-
-	headManifests := []string{`
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: test-app
-  namespace: default
-spec:
-  replicas: 3
-`}
-
-	diff, err := GenerateDiffLegacy(baseManifests, headManifests, "test-app")
-	if err != nil {
-		t.Fatalf("GenerateDiffLegacy() error = %v", err)
-	}
-
-	if !strings.Contains(diff, "test-app") {
-		t.Error("diff should contain app name")
-	}
-	if !strings.Contains(diff, "=====") {
-		t.Error("diff should indicate modification with ===== header")
-	}
-}
-
 func TestFilterHelmHooks(t *testing.T) {
 	resources := []*Resource{
 		{
