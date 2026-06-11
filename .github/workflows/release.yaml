@@ -13,6 +13,7 @@ env:
   REPOSITORY: ghcr.io/${{ github.repository }}
   CHART_DIR: charts/argo-diff
   CHART_REPOSITORY: ghcr.io/${{ github.repository_owner }}/charts
+  GOEXPERIMENT: jsonv2
 
 jobs:
   release:
