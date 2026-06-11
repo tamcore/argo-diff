@@ -40,9 +40,22 @@ TBD
 
 Use package names as scopes: (TBD)
 
+## Go Environment
+
+**This project requires `GOEXPERIMENT=jsonv2` for all Go commands** (build,
+test, vet, lint). The jwx v4 dependency uses the experimental
+`encoding/json/v2` package. Export it before running any Go tooling:
+
+```bash
+export GOEXPERIMENT=jsonv2
+```
+
+It is already configured in CI (`.github/workflows/ci.yaml`) and release
+builds (`.goreleaser.yaml`) — keep it in place when modifying those files.
+
 ## Code Quality Checks
 
-**Always run these commands before committing:**
+**Always run these commands before committing** (with `GOEXPERIMENT=jsonv2` exported):
 
 ### 1. Format Code
 ```bash

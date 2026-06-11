@@ -168,15 +168,23 @@ Prometheus metrics endpoint (served on `METRICS_PORT`).
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - golangci-lint
 - Access to an ArgoCD instance
 - GitHub repository with OIDC configured
 
+> **Note:** This project requires `GOEXPERIMENT=jsonv2` for all Go commands
+> (build, test, vet, lint). The jwx v4 dependency uses the experimental
+> `encoding/json/v2` package. Export it once in your shell:
+>
+> ```bash
+> export GOEXPERIMENT=jsonv2
+> ```
+
 ### Build
 
 ```bash
-go build -o bin/argo-diff ./cmd/server
+GOEXPERIMENT=jsonv2 go build -o bin/argo-diff ./cmd/server
 ```
 
 ### Run
@@ -189,12 +197,12 @@ export REPO_ALLOWLIST="owner/repo1,owner/repo2"
 ### Test
 
 ```bash
-go test ./...
+GOEXPERIMENT=jsonv2 go test ./...
 ```
 
 ### Code Quality
 
-Before committing, always run:
+Before committing, always run (with `GOEXPERIMENT=jsonv2` exported):
 
 ```bash
 go fmt ./...
