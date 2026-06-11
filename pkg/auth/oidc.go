@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jwt"
@@ -12,20 +13,32 @@ import (
 const (
 	GitHubIssuer  = "https://token.actions.githubusercontent.com"
 	GitHubJWKSURL = "https://token.actions.githubusercontent.com/.well-known/jwks"
+
+	// jwksMinRefreshInterval is the minimum interval between JWKS refreshes
+	jwksMinRefreshInterval = 15 * time.Minute
 )
 
 type OIDCValidator struct {
 	jwksURL string
+	cache   *jwk.Cache
 }
 
-func NewOIDCValidator() *OIDCValidator {
+// NewOIDCValidator creates a validator with a background-refreshing JWKS cache.
+// The provided context controls the lifetime of the cache refresh loop.
+func NewOIDCValidator(ctx context.Context) (*OIDCValidator, error) {
+	cache := jwk.NewCache(ctx)
+	if err := cache.Register(GitHubJWKSURL, jwk.WithMinRefreshInterval(jwksMinRefreshInterval)); err != nil {
+		return nil, fmt.Errorf("failed to register JWKS URL: %w", err)
+	}
+
 	return &OIDCValidator{
 		jwksURL: GitHubJWKSURL,
-	}
+		cache:   cache,
+	}, nil
 }
 
 func (v *OIDCValidator) ValidateToken(ctx context.Context, tokenString string) (string, error) {
-	keySet, err := jwk.Fetch(ctx, v.jwksURL)
+	keySet, err := v.cache.Get(ctx, v.jwksURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch JWKS: %w", err)
 	}
