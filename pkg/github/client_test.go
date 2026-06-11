@@ -152,7 +152,10 @@ func TestTruncateSectionSmallEnough(t *testing.T) {
 
 func TestNewClient(t *testing.T) {
 	// Test that NewClient doesn't panic with valid inputs
-	client := NewClient(context.TODO(), "test-token", "owner", "repo")
+	client, err := NewClient(context.TODO(), "test-token", "owner", "repo")
+	if err != nil {
+		t.Fatalf("NewClient returned unexpected error: %v", err)
+	}
 	if client.owner != "owner" {
 		t.Errorf("owner = %q, want %q", client.owner, "owner")
 	}
