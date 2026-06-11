@@ -47,6 +47,7 @@ type Server struct {
 	oidc    *auth.OIDCValidator
 	pool    *worker.Pool
 	limiter *ratelimit.Limiter
+	syncSem chan struct{} // bounds concurrent synchronous (?sync=true) jobs
 }
 
 func main() {
@@ -76,8 +77,9 @@ func main() {
 	}
 
 	srv := &Server{
-		cfg:  cfg,
-		oidc: oidcValidator,
+		cfg:     cfg,
+		oidc:    oidcValidator,
+		syncSem: make(chan struct{}, cfg.WorkerCount),
 	}
 
 	// Create rate limiter if enabled
@@ -86,7 +88,7 @@ func main() {
 	}
 
 	// Create and start worker pool
-	srv.pool = worker.NewPool(cfg.WorkerCount, cfg.QueueSize, srv.processJob)
+	srv.pool = worker.NewPool(cfg.WorkerCount, cfg.QueueSize, cfg.JobTimeout, srv.processJob)
 	srv.pool.Start()
 
 	mux := http.NewServeMux()
@@ -263,6 +265,21 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	syncMode := r.URL.Query().Get("sync") == "true"
 
 	if syncMode {
+		// Bound concurrent sync jobs so ?sync=true cannot bypass the
+		// concurrency limits enforced by the worker pool.
+		select {
+		case s.syncSem <- struct{}{}:
+			defer func() { <-s.syncSem }()
+		default:
+			metrics.RecordWebhookReceived(payload.Repository, "sync_rejected")
+			log.Warn("Too many concurrent sync jobs, rejecting",
+				"repository", payload.Repository,
+				"pr_number", payload.PRNumber,
+			)
+			http.Error(w, "Too many concurrent sync jobs, try again later", http.StatusServiceUnavailable)
+			return
+		}
+
 		// Process synchronously - this keeps the connection open
 		// and the GitHub token valid until we're done
 		log.Info("Processing job synchronously",
@@ -272,7 +289,10 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			"changed_files", len(payload.ChangedFiles),
 		)
 
-		if err := s.processJob(ctx, job); err != nil {
+		jobCtx, cancel := context.WithTimeout(ctx, s.cfg.JobTimeout)
+		defer cancel()
+
+		if err := s.processJob(jobCtx, job); err != nil {
 			log.Error("Sync job failed",
 				"repository", payload.Repository,
 				"pr_number", payload.PRNumber,
@@ -481,21 +501,9 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 		metrics.RecordApplicationDiff(job.Repository, appName, result.HasChanges)
 
 		// Record resource change counts
-		if result.ResourcesAdded > 0 {
-			for i := 0; i < result.ResourcesAdded; i++ {
-				metrics.RecordResourceChange(job.Repository, appName, "added")
-			}
-		}
-		if result.ResourcesModified > 0 {
-			for i := 0; i < result.ResourcesModified; i++ {
-				metrics.RecordResourceChange(job.Repository, appName, "modified")
-			}
-		}
-		if result.ResourcesDeleted > 0 {
-			for i := 0; i < result.ResourcesDeleted; i++ {
-				metrics.RecordResourceChange(job.Repository, appName, "deleted")
-			}
-		}
+		metrics.RecordResourceChanges(job.Repository, appName, "added", result.ResourcesAdded)
+		metrics.RecordResourceChanges(job.Repository, appName, "modified", result.ResourcesModified)
+		metrics.RecordResourceChanges(job.Repository, appName, "deleted", result.ResourcesDeleted)
 
 		diffResults = append(diffResults, result)
 	}

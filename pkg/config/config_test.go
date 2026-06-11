@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestLoad(t *testing.T) {
@@ -113,6 +114,35 @@ func TestLoad(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "custom job timeout",
+			envVars: map[string]string{
+				"REPO_ALLOWLIST": "owner/repo",
+				"JOB_TIMEOUT":    "5m",
+			},
+			wantErr: false,
+			checkConfig: func(t *testing.T, cfg *Config) {
+				if cfg.JobTimeout != 5*time.Minute {
+					t.Errorf("JobTimeout = %s, want 5m", cfg.JobTimeout)
+				}
+			},
+		},
+		{
+			name: "invalid job timeout",
+			envVars: map[string]string{
+				"REPO_ALLOWLIST": "owner/repo",
+				"JOB_TIMEOUT":    "ten minutes",
+			},
+			wantErr: true,
+		},
+		{
+			name: "non-positive job timeout",
+			envVars: map[string]string{
+				"REPO_ALLOWLIST": "owner/repo",
+				"JOB_TIMEOUT":    "0s",
+			},
+			wantErr: true,
+		},
+		{
 			name: "empty allowlist",
 			envVars: map[string]string{
 				"REPO_ALLOWLIST": "   ",
@@ -131,6 +161,7 @@ func TestLoad(t *testing.T) {
 			_ = os.Unsetenv("REPO_ALLOWLIST")
 			_ = os.Unsetenv("RATE_LIMIT_PER_REPO")
 			_ = os.Unsetenv("ARGOCD_PLAINTEXT")
+			_ = os.Unsetenv("JOB_TIMEOUT")
 
 			for key, value := range tt.envVars {
 				_ = os.Setenv(key, value)

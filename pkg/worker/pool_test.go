@@ -10,7 +10,7 @@ import (
 
 func TestNewPool(t *testing.T) {
 	processor := func(ctx context.Context, job Job) error { return nil }
-	pool := NewPool(3, 10, processor)
+	pool := NewPool(3, 10, time.Minute, processor)
 
 	if pool == nil {
 		t.Fatal("expected pool to be non-nil")
@@ -31,7 +31,7 @@ func TestPoolSubmitAndProcess(t *testing.T) {
 		return nil
 	}
 
-	pool := NewPool(2, 10, processor)
+	pool := NewPool(2, 10, time.Minute, processor)
 	pool.Start()
 	defer pool.Stop(time.Second)
 
@@ -60,7 +60,7 @@ func TestPoolSubmitWhenDraining(t *testing.T) {
 		return nil
 	}
 
-	pool := NewPool(1, 5, processor)
+	pool := NewPool(1, 5, time.Minute, processor)
 	pool.Start()
 
 	// Mark as draining
@@ -81,7 +81,7 @@ func TestPoolSubmitQueueFull(t *testing.T) {
 		return nil
 	}
 
-	pool := NewPool(1, 2, processor)
+	pool := NewPool(1, 2, time.Minute, processor)
 	pool.Start()
 	defer pool.Stop(time.Second)
 
@@ -102,7 +102,7 @@ func TestPoolStatus(t *testing.T) {
 		return nil
 	}
 
-	pool := NewPool(2, 10, processor)
+	pool := NewPool(2, 10, time.Minute, processor)
 	pool.Start()
 	defer pool.Stop(time.Second)
 
@@ -124,7 +124,7 @@ func TestPoolStatus(t *testing.T) {
 
 func TestPoolIsReady(t *testing.T) {
 	processor := func(ctx context.Context, job Job) error { return nil }
-	pool := NewPool(1, 5, processor)
+	pool := NewPool(1, 5, time.Minute, processor)
 	pool.Start()
 
 	if !pool.IsReady() {
@@ -149,7 +149,7 @@ func TestPoolGracefulStop(t *testing.T) {
 		return nil
 	}
 
-	pool := NewPool(1, 5, processor)
+	pool := NewPool(1, 5, time.Minute, processor)
 	pool.Start()
 
 	// Submit a job that will be processing when we stop
@@ -171,7 +171,7 @@ func TestPoolStopTimeout(t *testing.T) {
 		return nil
 	}
 
-	pool := NewPool(1, 5, processor)
+	pool := NewPool(1, 5, time.Minute, processor)
 	pool.Start()
 
 	// Submit a slow job
@@ -188,6 +188,63 @@ func TestPoolStopTimeout(t *testing.T) {
 	}
 }
 
+func TestPoolStopDrainsQueuedJobs(t *testing.T) {
+	var processed atomic.Int32
+
+	processor := func(ctx context.Context, job Job) error {
+		time.Sleep(10 * time.Millisecond)
+		processed.Add(1)
+		return nil
+	}
+
+	pool := NewPool(1, 10, time.Minute, processor)
+	pool.Start()
+
+	// Queue more jobs than a single worker can pick up immediately
+	for i := 0; i < 5; i++ {
+		if !pool.Submit(Job{Repository: "test/repo", PRNumber: i}) {
+			t.Fatalf("failed to submit job %d", i)
+		}
+	}
+
+	// Stop must drain all accepted jobs before returning
+	pool.Stop(2 * time.Second)
+
+	if processed.Load() != 5 {
+		t.Errorf("expected all 5 queued jobs to be processed on Stop, got %d", processed.Load())
+	}
+}
+
+func TestPoolJobTimeout(t *testing.T) {
+	timedOut := make(chan bool, 1)
+
+	processor := func(ctx context.Context, job Job) error {
+		select {
+		case <-ctx.Done():
+			timedOut <- true
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+			timedOut <- false
+			return nil
+		}
+	}
+
+	pool := NewPool(1, 5, 50*time.Millisecond, processor)
+	pool.Start()
+	defer pool.Stop(time.Second)
+
+	pool.Submit(Job{Repository: "test/repo", PRNumber: 1})
+
+	select {
+	case wasCancelled := <-timedOut:
+		if !wasCancelled {
+			t.Error("expected job context to be cancelled by timeout")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("job did not observe its timeout in time")
+	}
+}
+
 func TestPoolConcurrentSubmit(t *testing.T) {
 	var processed atomic.Int32
 
@@ -196,7 +253,7 @@ func TestPoolConcurrentSubmit(t *testing.T) {
 		return nil
 	}
 
-	pool := NewPool(4, 100, processor)
+	pool := NewPool(4, 100, time.Minute, processor)
 	pool.Start()
 	defer pool.Stop(time.Second)
 
