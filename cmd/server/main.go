@@ -437,7 +437,7 @@ func (s *Server) processJob(ctx context.Context, job worker.Job) error {
 			baseRevisions := make([]argocd.MultiSourceRevision, sourceCount)
 			headRevisions := make([]argocd.MultiSourceRevision, sourceCount)
 
-			for i := 0; i < sourceCount; i++ {
+			for i := range sourceCount {
 				baseRevisions[i] = argocd.MultiSourceRevision{
 					Revision:       job.BaseRef,
 					SourcePosition: i + 1, // 1-based

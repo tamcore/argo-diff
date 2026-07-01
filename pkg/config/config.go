@@ -154,8 +154,8 @@ func matchPattern(pattern, repo string) bool {
 	}
 
 	// Wildcard match (e.g., "myorg/*")
-	if strings.HasSuffix(pattern, "/*") {
-		prefix := strings.TrimSuffix(pattern, "/*")
+	if before, ok := strings.CutSuffix(pattern, "/*"); ok {
+		prefix := before
 		return strings.HasPrefix(repo, prefix+"/")
 	}
 

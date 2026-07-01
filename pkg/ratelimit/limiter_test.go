@@ -28,7 +28,7 @@ func TestLimiterAllow(t *testing.T) {
 	key := "test-repo"
 
 	// First 3 requests should be allowed
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !l.Allow(key) {
 			t.Errorf("request %d should be allowed", i+1)
 		}
@@ -88,10 +88,8 @@ func TestLimiterConcurrentAccess(t *testing.T) {
 	var mu sync.Mutex
 
 	// Spawn 200 concurrent requests
-	for i := 0; i < 200; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 200 {
+		wg.Go(func() {
 			if l.Allow("concurrent-test") {
 				mu.Lock()
 				allowed++
@@ -101,7 +99,7 @@ func TestLimiterConcurrentAccess(t *testing.T) {
 				denied++
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

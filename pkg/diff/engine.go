@@ -297,8 +297,8 @@ func parseManifests(manifests []string) ([]*Resource, error) {
 		}
 
 		// Split YAML documents
-		docs := strings.Split(manifest, "\n---\n")
-		for _, doc := range docs {
+		docs := strings.SplitSeq(manifest, "\n---\n")
+		for doc := range docs {
 			doc = strings.TrimSpace(doc)
 			if doc == "" {
 				continue
@@ -327,7 +327,7 @@ func parseManifests(manifests []string) ([]*Resource, error) {
 
 // jsonToYAML converts a JSON string to YAML format with reasonable line width
 func jsonToYAML(jsonStr string) (string, error) {
-	var data interface{}
+	var data any
 	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return "", err
 	}
@@ -369,7 +369,7 @@ func filterMetadata(resources []*Resource, patterns []string) []*Resource {
 	filtered := make([]*Resource, 0, len(resources))
 	for _, r := range resources {
 		// Parse the raw YAML into a generic map to manipulate
-		var obj map[string]interface{}
+		var obj map[string]any
 		if err := yaml.Unmarshal([]byte(r.raw), &obj); err != nil {
 			// If we can't parse, keep the original
 			filtered = append(filtered, r)
@@ -377,10 +377,10 @@ func filterMetadata(resources []*Resource, patterns []string) []*Resource {
 		}
 
 		// Remove matching metadata
-		if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+		if metadata, ok := obj["metadata"].(map[string]any); ok {
 			// Filter labels
-			if labels, ok := metadata["labels"].(map[string]interface{}); ok {
-				filteredLabels := make(map[string]interface{})
+			if labels, ok := metadata["labels"].(map[string]any); ok {
+				filteredLabels := make(map[string]any)
 				for k, v := range labels {
 					if !shouldFilterKey(k, patterns) {
 						filteredLabels[k] = v
@@ -394,8 +394,8 @@ func filterMetadata(resources []*Resource, patterns []string) []*Resource {
 			}
 
 			// Filter annotations
-			if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
-				filteredAnnotations := make(map[string]interface{})
+			if annotations, ok := metadata["annotations"].(map[string]any); ok {
+				filteredAnnotations := make(map[string]any)
 				for k, v := range annotations {
 					if !shouldFilterKey(k, patterns) {
 						filteredAnnotations[k] = v

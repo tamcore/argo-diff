@@ -152,7 +152,7 @@ func GetSourceCount(app *appv1.Application) int {
 // retry executes a function with exponential backoff
 func retry(ctx context.Context, attempts int, fn func() error) error {
 	var err error
-	for i := 0; i < attempts; i++ {
+	for i := range attempts {
 		err = fn()
 		if err == nil {
 			return nil
