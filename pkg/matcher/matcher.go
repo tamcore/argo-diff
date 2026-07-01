@@ -3,6 +3,7 @@ package matcher
 import (
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	appv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
@@ -119,13 +120,7 @@ func isAppDefinitionFile(file, appName string) bool {
 		appName + ".yml",
 	}
 
-	nameMatches := false
-	for _, expected := range expectedNames {
-		if base == expected {
-			nameMatches = true
-			break
-		}
-	}
+	nameMatches := slices.Contains(expectedNames, base)
 
 	if !nameMatches {
 		return false

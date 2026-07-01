@@ -36,7 +36,7 @@ func TestPoolSubmitAndProcess(t *testing.T) {
 	defer pool.Stop(time.Second)
 
 	// Submit jobs
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		job := Job{
 			Repository: "test/repo",
 			PRNumber:   i,
@@ -86,7 +86,7 @@ func TestPoolSubmitQueueFull(t *testing.T) {
 	defer pool.Stop(time.Second)
 
 	// Fill the queue
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		pool.Submit(Job{Repository: "test/repo", PRNumber: i})
 	}
 
@@ -201,7 +201,7 @@ func TestPoolStopDrainsQueuedJobs(t *testing.T) {
 	pool.Start()
 
 	// Queue more jobs than a single worker can pick up immediately
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if !pool.Submit(Job{Repository: "test/repo", PRNumber: i}) {
 			t.Fatalf("failed to submit job %d", i)
 		}
@@ -259,7 +259,7 @@ func TestPoolConcurrentSubmit(t *testing.T) {
 
 	// Concurrent submits
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
