@@ -18,17 +18,30 @@ const (
 	helmHookAnnotation = "helm.sh/hook"
 )
 
+// ResourceMetadata holds the metadata fields we key and filter on.
+type ResourceMetadata struct {
+	Name         string            `yaml:"name"`
+	GenerateName string            `yaml:"generateName,omitempty"`
+	Namespace    string            `yaml:"namespace,omitempty"`
+	Labels       map[string]string `yaml:"labels,omitempty"`
+	Annotations  map[string]string `yaml:"annotations,omitempty"`
+}
+
+// identity returns the name used to key a resource: metadata.name, or
+// metadata.generateName when name is empty (hook Jobs use generateName).
+func (m ResourceMetadata) identity() string {
+	if m.Name != "" {
+		return m.Name
+	}
+	return m.GenerateName
+}
+
 // Resource represents a Kubernetes resource extracted from a YAML manifest
 type Resource struct {
-	APIVersion string `yaml:"apiVersion"`
-	Kind       string `yaml:"kind"`
-	Metadata   struct {
-		Name        string            `yaml:"name"`
-		Namespace   string            `yaml:"namespace,omitempty"`
-		Labels      map[string]string `yaml:"labels,omitempty"`
-		Annotations map[string]string `yaml:"annotations,omitempty"`
-	} `yaml:"metadata"`
-	raw string
+	APIVersion string           `yaml:"apiVersion"`
+	Kind       string           `yaml:"kind"`
+	Metadata   ResourceMetadata `yaml:"metadata"`
+	raw        string
 }
 
 // GenerateDiff generates a formatted diff between base and head manifests
@@ -88,7 +101,7 @@ func GenerateDiffWithOptions(baseManifests, headManifests []string, appInfo *App
 	}
 	keyFor := func(r *Resource) string {
 		if destNS != "" && r.Metadata.Namespace == destNS {
-			return fmt.Sprintf("%s/%s/%s", r.APIVersion, r.Kind, r.Metadata.Name)
+			return fmt.Sprintf("%s/%s/%s", r.APIVersion, r.Kind, r.Metadata.identity())
 		}
 		return r.key()
 	}
@@ -312,8 +325,9 @@ func parseManifests(manifests []string) ([]*Resource, error) {
 				continue
 			}
 
-			// Skip empty resources
-			if r.APIVersion == "" || r.Kind == "" || r.Metadata.Name == "" {
+			// Skip empty resources. A resource with only generateName (e.g. hook
+			// Jobs) has no name but is still a real, diffable resource.
+			if r.APIVersion == "" || r.Kind == "" || r.Metadata.identity() == "" {
 				continue
 			}
 
@@ -474,9 +488,9 @@ func filterMapByPatterns(m map[string]string, patterns []string) map[string]stri
 // key returns a unique key for the resource
 func (r *Resource) key() string {
 	if r.Metadata.Namespace != "" {
-		return fmt.Sprintf("%s/%s/%s/%s", r.APIVersion, r.Kind, r.Metadata.Namespace, r.Metadata.Name)
+		return fmt.Sprintf("%s/%s/%s/%s", r.APIVersion, r.Kind, r.Metadata.Namespace, r.Metadata.identity())
 	}
-	return fmt.Sprintf("%s/%s/%s", r.APIVersion, r.Kind, r.Metadata.Name)
+	return fmt.Sprintf("%s/%s/%s", r.APIVersion, r.Kind, r.Metadata.identity())
 }
 
 // generateResourceDiff generates a unified diff for a single resource

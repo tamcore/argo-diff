@@ -54,12 +54,7 @@ func TestFilterHelmHooks(t *testing.T) {
 		{
 			APIVersion: "v1",
 			Kind:       "Job",
-			Metadata: struct {
-				Name        string            `yaml:"name"`
-				Namespace   string            `yaml:"namespace,omitempty"`
-				Labels      map[string]string `yaml:"labels,omitempty"`
-				Annotations map[string]string `yaml:"annotations,omitempty"`
-			}{
+			Metadata: ResourceMetadata{
 				Name: "pre-install",
 				Annotations: map[string]string{
 					helmHookAnnotation: "pre-install",
@@ -69,12 +64,7 @@ func TestFilterHelmHooks(t *testing.T) {
 		{
 			APIVersion: "v1",
 			Kind:       "Service",
-			Metadata: struct {
-				Name        string            `yaml:"name"`
-				Namespace   string            `yaml:"namespace,omitempty"`
-				Labels      map[string]string `yaml:"labels,omitempty"`
-				Annotations map[string]string `yaml:"annotations,omitempty"`
-			}{
+			Metadata: ResourceMetadata{
 				Name: "app-service",
 			},
 		},
@@ -100,12 +90,7 @@ func TestResourceKey(t *testing.T) {
 			resource: &Resource{
 				APIVersion: "apps/v1",
 				Kind:       "Deployment",
-				Metadata: struct {
-					Name        string            `yaml:"name"`
-					Namespace   string            `yaml:"namespace,omitempty"`
-					Labels      map[string]string `yaml:"labels,omitempty"`
-					Annotations map[string]string `yaml:"annotations,omitempty"`
-				}{
+				Metadata: ResourceMetadata{
 					Name:      "test-app",
 					Namespace: "default",
 				},
@@ -117,12 +102,7 @@ func TestResourceKey(t *testing.T) {
 			resource: &Resource{
 				APIVersion: "v1",
 				Kind:       "ConfigMap",
-				Metadata: struct {
-					Name        string            `yaml:"name"`
-					Namespace   string            `yaml:"namespace,omitempty"`
-					Labels      map[string]string `yaml:"labels,omitempty"`
-					Annotations map[string]string `yaml:"annotations,omitempty"`
-				}{
+				Metadata: ResourceMetadata{
 					Name: "test-config",
 				},
 			},
@@ -756,24 +736,9 @@ spec:
 
 func TestSortResources(t *testing.T) {
 	resources := []*Resource{
-		{Kind: "Service", Metadata: struct {
-			Name        string            `yaml:"name"`
-			Namespace   string            `yaml:"namespace,omitempty"`
-			Labels      map[string]string `yaml:"labels,omitempty"`
-			Annotations map[string]string `yaml:"annotations,omitempty"`
-		}{Name: "z-svc"}},
-		{Kind: "Deployment", Metadata: struct {
-			Name        string            `yaml:"name"`
-			Namespace   string            `yaml:"namespace,omitempty"`
-			Labels      map[string]string `yaml:"labels,omitempty"`
-			Annotations map[string]string `yaml:"annotations,omitempty"`
-		}{Name: "b-deploy"}},
-		{Kind: "Deployment", Metadata: struct {
-			Name        string            `yaml:"name"`
-			Namespace   string            `yaml:"namespace,omitempty"`
-			Labels      map[string]string `yaml:"labels,omitempty"`
-			Annotations map[string]string `yaml:"annotations,omitempty"`
-		}{Name: "a-deploy"}},
+		{Kind: "Service", Metadata: ResourceMetadata{Name: "z-svc"}},
+		{Kind: "Deployment", Metadata: ResourceMetadata{Name: "b-deploy"}},
+		{Kind: "Deployment", Metadata: ResourceMetadata{Name: "a-deploy"}},
 	}
 
 	SortResources(resources)
@@ -806,5 +771,76 @@ func TestParseManifestsJSON(t *testing.T) {
 	}
 	if resources[0].Metadata.Name != "test" {
 		t.Errorf("Name = %q, want %q", resources[0].Metadata.Name, "test")
+	}
+}
+
+// generateNameJob renders a PostSync hook Job that uses metadata.generateName
+// (no metadata.name), embedding notesVersion in its args — mirrors
+// charts/nextcloud/templates/installapps.yaml in tamcore/k8s.
+func generateNameJob(notesVersion string) string {
+	return `
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: nextcloud-install-apps-
+  namespace: nextcloud
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+spec:
+  template:
+    spec:
+      containers:
+      - name: kubectl
+        args:
+        - -cx
+        - |
+          NEXTCLOUD_APPS+=("notes:` + notesVersion + `")
+`
+}
+
+func TestParseManifestsKeepsGenerateName(t *testing.T) {
+	resources, err := parseManifests([]string{generateNameJob("v6.0.1")})
+	if err != nil {
+		t.Fatalf("parseManifests() error = %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("parseManifests() returned %d resources, want 1 (generateName-only resource must not be dropped)", len(resources))
+	}
+	if resources[0].Metadata.GenerateName != "nextcloud-install-apps-" {
+		t.Errorf("GenerateName = %q, want %q", resources[0].Metadata.GenerateName, "nextcloud-install-apps-")
+	}
+}
+
+func TestResourceKeyUsesGenerateName(t *testing.T) {
+	r := &Resource{
+		APIVersion: "batch/v1",
+		Kind:       "Job",
+		Metadata: ResourceMetadata{
+			GenerateName: "nextcloud-install-apps-",
+			Namespace:    "nextcloud",
+		},
+	}
+	want := "batch/v1/Job/nextcloud/nextcloud-install-apps-"
+	if got := r.key(); got != want {
+		t.Errorf("key() = %q, want %q", got, want)
+	}
+}
+
+// A change confined to a generateName-only hook Job (the common shape of
+// renovate bumps in tamcore/k8s#2768) must be reported as a change, not
+// swallowed as "No changes".
+func TestGenerateDiffDetectsGenerateNameJobChange(t *testing.T) {
+	base := []string{generateNameJob("v4.12.3")}
+	head := []string{generateNameJob("v6.0.1")}
+
+	result, err := GenerateDiff(base, head, &AppInfo{Name: "nextcloud"})
+	if err != nil {
+		t.Fatalf("GenerateDiff() error = %v", err)
+	}
+	if !result.HasChanges {
+		t.Fatal("result should indicate changes for a generateName Job body change")
+	}
+	if result.ResourcesModified != 1 {
+		t.Errorf("ResourcesModified = %d, want 1", result.ResourcesModified)
 	}
 }
